@@ -1,0 +1,104 @@
+#include <winres.h>
+#include "resource.h"
+#include "Version.h"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+IDI_APP ICON "../../assets/icons/SmoothCam.ico"
+
+IDR_NOTICES RCDATA "../../THIRD_PARTY_NOTICES.md"
+IDR_LICENSE RCDATA "../../LICENSE"
+
+// Positions here are placeholders: MainWindow::Layout() places everything so
+// the window can be resized, go full screen and move the panel left or right.
+// Control order is the keyboard tab order.
+IDD_MAIN DIALOGEX 0, 0, 640, 400
+STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "SmoothCam"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    ICON            IDI_APP, IDC_LOGO, 0, 0, 24, 24, SS_REALSIZEIMAGE | SS_CENTERIMAGE
+    LTEXT           "SmoothCam", IDC_TITLE, 0, 0, 10, 10
+    LTEXT           "Smooth, steady frame rate for any webcam", IDC_SUBTITLE, 0, 0, 10, 10
+    PUSHBUTTON      "Hide pre&view", IDC_COLLAPSE, 0, 0, 10, 10, WS_TABSTOP
+
+    LTEXT           "&Camera", IDC_LABEL_CAMERA, 0, 0, 10, 10
+    COMBOBOX        IDC_CAMERA, 0, 0, 10, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Frame rate", IDC_LABEL_FPS, 0, 0, 10, 10
+    COMBOBOX        IDC_FPS, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Mo&de", IDC_LABEL_MODE, 0, 0, 10, 10
+    COMBOBOX        IDC_MODE, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_MODE_HINT, 0, 0, 10, 10
+    LTEXT           "&Resolution", IDC_LABEL_RES, 0, 0, 10, 10
+    COMBOBOX        IDC_RESOLUTION, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Motion &estimation", IDC_LABEL_ENGINE, 0, 0, 10, 10
+    COMBOBOX        IDC_ENGINE, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "S&harpening", IDC_LABEL_SHARP, 0, 0, 10, 10
+    COMBOBOX        IDC_SHARPNESS, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    LTEXT           "Effects", IDC_EFFECTS_HEADER, 0, 0, 10, 10
+    LTEXT           "&Noise reduction", IDC_LABEL_NOISE, 0, 0, 10, 10
+    COMBOBOX        IDC_NOISE, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Low-light boost", IDC_LABEL_LOWLIGHT, 0, 0, 10, 10
+    COMBOBOX        IDC_LOWLIGHT, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Background", IDC_LABEL_BACKGROUND, 0, 0, 10, 10
+    COMBOBOX        IDC_BACKGROUND, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Auto-fra&ming", IDC_LABEL_AUTOFRAME, 0, 0, 10, 10
+    COMBOBOX        IDC_AUTOFRAME, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Framing &grid (preview only)", IDC_LABEL_GRID, 0, 0, 10, 10
+    COMBOBOX        IDC_GRID, 0, 0, 10, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Camera low-light mode (brighter, slower camera)", IDC_STEADY, 0, 0, 10, 10, WS_TABSTOP
+    AUTOCHECKBOX    "C&ompare view (original on the left half)", IDC_COMPARE, 0, 0, 10, 10, WS_TABSTOP
+    LTEXT           "", IDC_FPS_NOTE, 0, 0, 10, 10
+    LTEXT           "", IDC_REG_STATUS, 0, 0, 10, 10
+    PUSHBUTTON      "&About", IDC_ABOUT, 0, 0, 10, 10, WS_TABSTOP
+    PUSHBUTTON      "Repa&ir camera...", IDC_REPAIR, 0, 0, 10, 10, WS_TABSTOP
+
+    CONTROL         "", IDC_PREVIEW, "SmoothCamPreview", WS_TABSTOP, 0, 0, 10, 10
+    PUSHBUTTON      "Stop &preview", IDC_PREVIEW_BTN, 0, 0, 10, 10, WS_TABSTOP
+    PUSHBUTTON      "F&ull screen", IDC_FULLSCREEN, 0, 0, 10, 10, WS_TABSTOP
+    PUSHBUTTON      "Hide se&ttings", IDC_TOGGLE_PANEL, 0, 0, 10, 10, WS_TABSTOP
+    LTEXT           "", IDC_STATUS, 0, 0, 10, 10
+END
+
+IDD_ABOUT DIALOGEX 0, 0, 320, 250
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About SmoothCam"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    ICON            IDI_APP, IDC_ABOUT_LOGO, 10, 10, 24, 24, SS_REALSIZEIMAGE | SS_CENTERIMAGE
+    LTEXT           "SmoothCam", IDC_ABOUT_TITLE, 40, 9, 270, 14
+    LTEXT           "", IDC_ABOUT_TEXT, 40, 25, 270, 66
+    EDITTEXT        IDC_ABOUT_NOTICES, 10, 96, 300, 128, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK", IDOK, 250, 230, 60, 14
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION SMOOTHCAM_VERSION_RC
+ PRODUCTVERSION SMOOTHCAM_VERSION_RC
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "SmoothCam contributors"
+            VALUE "FileDescription", "SmoothCam"
+            VALUE "FileVersion", SMOOTHCAM_VERSION_STRING
+            VALUE "InternalName", "SmoothCam"
+            VALUE "LegalCopyright", "Copyright (c) 2026 SmoothCam contributors. MIT License."
+            VALUE "OriginalFilename", "SmoothCam.exe"
+            VALUE "ProductName", "SmoothCam"
+            VALUE "ProductVersion", SMOOTHCAM_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

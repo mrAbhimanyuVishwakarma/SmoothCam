@@ -1,0 +1,5 @@
+{
+  "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build/x64-release"],
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/x64-release/compile_commands.json",
+  "cmake.useCMakePresets": "always"
+}

@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake --preset x64-release
+
+      - name: Build
+        run: cmake --build --preset x64-release
+
+      # No GPU on hosted runners: the GPU tests run on WARP, the NVIDIA one skips.
+      - name: Test
+        run: ctest --preset x64-release
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SmoothCam_beta3
+          path: |
+            dist/SmoothCam_beta3.exe
+            dist/SmoothCam_beta3.exe.sha256

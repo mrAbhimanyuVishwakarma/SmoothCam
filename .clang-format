@@ -1,0 +1,7 @@
+BasedOnStyle: Microsoft
+ColumnLimit: 110
+PointerAlignment: Left
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
