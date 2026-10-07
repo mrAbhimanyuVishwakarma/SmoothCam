@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd \"SmoothCam Website\" && npm install",
+  "buildCommand": "cd \"SmoothCam Website\" && npm run build",
+  "outputDirectory": "SmoothCam Website/dist",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- \"SmoothCam Website\" vercel.json"
+}

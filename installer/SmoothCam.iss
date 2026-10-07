@@ -23,7 +23,7 @@
 #define AppName "SmoothCam"
 #define AppPublisher "SmoothCam contributors"
 #define AppURL "https://smoothcam.vercel.app"
-#define RepoURL "https://github.com/smoothcam/SmoothCam"
+#define RepoURL "https://github.com/mrAbhimanyuVishwakarma/SmoothCam"
 #define AppExe "SmoothCam.exe"
 
 [Setup]
