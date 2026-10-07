@@ -112,7 +112,8 @@ int RunDiagnostics()
     for (const auto& cam : EnumerateAllCameras())
     {
         const bool ours = IsSmoothCamDevice(cam.name, cam.symbolicLink);
-        Print(L"  %s%s\n", cam.name.c_str(), ours ? L"  [virtual]" : L"");
+        Print(L"  %s%s\n", cam.name.c_str(),
+              ours ? L"  [SmoothCam]" : IsVirtualCamera(cam.symbolicLink) ? L"  [virtual - usable as input]" : L"");
         if (ours)
             continue;
         long priority = 0;

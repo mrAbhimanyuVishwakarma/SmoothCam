@@ -104,7 +104,7 @@ HRESULT MediaStream::BuildMediaTypes(const Settings& settings)
     // 30 fps fallback and some apps happily picked it over the user's 60.
     uint32_t width = 0, height = 0;
     EffectiveOutputSize(settings, width, height);
-    const uint32_t fps = settings.outputFps;
+    const uint32_t fps = EffectiveOutputFps(settings);
     std::vector<Resolution> resolutions = {{width, height}};
     for (uint32_t h : kHeights)
         if (h < height && WidthForHeight(h) < width)

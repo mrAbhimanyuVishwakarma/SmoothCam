@@ -31,6 +31,12 @@ class PreviewRenderer
 {
 public:
     void SetGrid(FramingGrid grid) { m_grid = grid; }
+    // Captions for the compare view (left: camera, right: SmoothCam); empty = none.
+    void SetCompareLabels(std::wstring left, std::wstring right)
+    {
+        m_labelLeft = std::move(left);
+        m_labelRight = std::move(right);
+    }
 
     HRESULT Init(HWND hwnd);
     void SetDpi(UINT dpi);
@@ -44,16 +50,21 @@ private:
     HRESULT EnsureTarget();
     void DiscardTarget();
     void DrawGrid(const D2D1_RECT_F& video);
+    void DrawLabels(const D2D1_RECT_F& video);
 
     HWND m_hwnd = nullptr;
     UINT m_dpi = 96;
     wil::com_ptr_nothrow<ID2D1Factory1> m_factory;
     wil::com_ptr_nothrow<IDWriteFactory> m_dwrite;
     wil::com_ptr_nothrow<IDWriteTextFormat> m_textFormat;
+    wil::com_ptr_nothrow<IDWriteTextFormat> m_labelFormat;
     wil::com_ptr_nothrow<ID2D1DCRenderTarget> m_target;
     wil::com_ptr_nothrow<ID2D1DeviceContext> m_context;
     wil::com_ptr_nothrow<ID2D1SolidColorBrush> m_textBrush;
     wil::com_ptr_nothrow<ID2D1SolidColorBrush> m_gridBrush;
+    wil::com_ptr_nothrow<ID2D1SolidColorBrush> m_labelBack;
+    wil::com_ptr_nothrow<ID2D1SolidColorBrush> m_labelText;
+    std::wstring m_labelLeft, m_labelRight;
     FramingGrid m_grid = FramingGrid::Off;
     wil::com_ptr_nothrow<ID2D1Bitmap> m_bitmap;
     uint32_t m_bitmapW = 0;

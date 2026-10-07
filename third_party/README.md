@@ -24,6 +24,22 @@ To build without the NVIDIA path at all: `cmake --preset x64-release -DSMOOTHCAM
 `fsr/COMMIT` (MIT, see `fsr/LICENSE.txt`). The shaders `FsrEasu.hlsl` and `FsrRcas.hlsl` include
 them, and `FsrConstants.cpp` uses their CPU half to compute the shader constants.
 
+## cas/ - AMD FidelityFX CAS
+
+`ffx_cas.h`, copied unchanged from
+[GPUOpen-Effects/FidelityFX-CAS](https://github.com/GPUOpen-Effects/FidelityFX-CAS) at the commit in
+`cas/COMMIT` (MIT, see `cas/LICENSE.txt`). It builds on the `ffx_a.h` already in `fsr/`.
+`CasUpscale.hlsl` includes it, and `FsrConstants.cpp` uses its CPU half for the constants.
+
+## nis/ - NVIDIA Image Scaling SDK
+
+`NIS_Scaler.h` and `NIS_Config.h` from
+[NVIDIAGameWorks/NVIDIAImageScaling](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) at the
+commit in `nis/COMMIT` (MIT, see `nis/LICENSE.txt`). `NIS_Config.h` is unchanged. `NIS_Scaler.h` has
+one small, marked change: an `NIS_LUMA_ONLY` switch so its NV12 path writes scaled luma instead of
+RGB, because SmoothCam upscales the chroma plane separately. `NisScaler.hlsl` includes it, and
+`NisConstants.cpp` uses `NIS_Config.h` for the constants and filter tables.
+
 ## assets/models/ - person segmentation model
 
 `selfie_segmenter.onnx` is Google's MediaPipe Selfie Segmentation (landscape), Apache-2.0, prepared

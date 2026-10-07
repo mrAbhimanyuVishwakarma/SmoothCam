@@ -33,6 +33,8 @@ std::vector<CameraInfo> EnumerateCameras();
 // Every video capture device, virtual ones included.
 std::vector<CameraInfo> EnumerateAllCameras();
 bool IsSmoothCamDevice(const std::wstring& name, const std::wstring& symbolicLink);
+// True for any Windows virtual camera (SmoothCam, Phone Link, ...).
+bool IsVirtualCamera(const std::wstring& symbolicLink);
 HRESULT EnumerateCameraFormats(const std::wstring& symbolicLink, std::vector<CameraFormat>& formats);
 
 // Reads the UVC "auto-exposure priority" control: 0 = keep frame rate, 1 = may

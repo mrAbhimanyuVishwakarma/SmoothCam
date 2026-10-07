@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the SmoothCam installer (dist\SmoothCam_beta2.exe) from a release build.
+    Builds the SmoothCam installer (dist\SmoothCam_v0.0.1.exe) from a release build.
 
 .EXAMPLE
     .\scripts\build.ps1 -Installer          # build + package
@@ -9,8 +9,8 @@
 #>
 param(
     [string]$BuildDir = 'build\x64-release',
-    [string]$OutputName = 'SmoothCam_beta3',
-    [string]$VersionLabel = 'Beta 3',
+    [string]$OutputName = 'SmoothCam_v0.0.1',
+    [string]$VersionLabel = '',
     [switch]$Sign
 )
 

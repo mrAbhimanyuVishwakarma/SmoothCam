@@ -41,7 +41,8 @@ TEST(Settings, RoundTrip)
     s.lowLight = LowLightBoost::Auto;
     s.background = Background::StrongBlur;
     s.autoFrame = AutoFrame::Close;
-    s.upscaler = Upscaler::Nis;
+    s.upscaler = Upscaler::Lanczos;
+    s.enabled = false;
     s.mode = Mode::LowLatency;
     s.engine = EngineChoice::Gpu;
     s.steadyFps = false;
@@ -85,8 +86,41 @@ TEST(Settings, ClampsOutputHeight)
     EXPECT_EQ(ParseBackground(L"strong_blur"), Background::StrongBlur);
     EXPECT_EQ(ParseAutoFrame(L"Wide"), AutoFrame::Wide);
     EXPECT_EQ(ParseUpscaler(L"NIS"), Upscaler::Nis);
+    EXPECT_EQ(ParseUpscaler(L"lanczos"), Upscaler::Lanczos);
+    EXPECT_FALSE(ParseUpscaler(L"xbr").has_value());
     EXPECT_EQ(ParseLowLightBoost(L"strong"), LowLightBoost::Strong);
     EXPECT_EQ(ParseNoiseReduction(L"medium"), NoiseReduction::Medium);
+}
+
+TEST(Settings, SwitchedOffIsPlainCamera)
+{
+    Settings s;
+    s.maxWidth = 1920;
+    s.maxHeight = 1080;
+    s.cameraFps = 30;
+    s.outputFps = 60;
+    s.outputWidth = 3840;
+    s.outputHeight = 2160;
+    s.noiseReduction = NoiseReduction::High;
+    s.background = Background::Blur;
+    s.compare = true;
+    uint32_t w = 0, h = 0;
+    EffectiveOutputSize(s, w, h);
+    EXPECT_EQ(w, 3840u);
+    EXPECT_EQ(EffectiveOutputFps(s), 60u);
+    EXPECT_EQ(ProcessingSettings(s), s);
+
+    s.enabled = false;
+    EffectiveOutputSize(s, w, h);
+    EXPECT_EQ(w, 1920u);
+    EXPECT_EQ(h, 1080u);
+    EXPECT_EQ(EffectiveOutputFps(s), 30u);
+    const Settings p = ProcessingSettings(s);
+    EXPECT_EQ(p.mode, Mode::Off);
+    EXPECT_EQ(p.noiseReduction, NoiseReduction::Off);
+    EXPECT_EQ(p.background, Background::Off);
+    EXPECT_EQ(p.upscaler, Upscaler::Off);
+    EXPECT_FALSE(p.compare);
 }
 
 TEST(Settings, EffectiveOutputSize)

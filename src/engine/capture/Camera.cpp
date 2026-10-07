@@ -2,12 +2,14 @@
 
 #include "Log.h"
 
+#include <cfgmgr32.h>
 #include <ks.h>
 #include <ksmedia.h>
 #include <ksproxy.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mftransform.h>
+#include <wil/resource.h>
 #include <wrl/implements.h>
 
 #include <algorithm>
@@ -37,13 +39,77 @@ std::wstring GetString(IMFActivate* activate, const GUID& key)
     return value.get();
 }
 
+// Another virtual camera (a phone via Phone Link, OBS, ...) is just a COM media
+// source that Windows registered under the camera's device interface. Inside
+// Frame Server - where SmoothCam's own source runs - MFCreateDeviceSource can't
+// open such a camera (E_NOINTERFACE), so create its media source directly, the
+// same way Frame Server itself does.
+HRESULT CreateVirtualCameraSource(const std::wstring& symbolicLink, ComPtr<IMFMediaSource>& source)
+{
+    HKEY rawKey = nullptr;
+    if (CM_Open_Device_Interface_KeyW(symbolicLink.c_str(), KEY_READ, RegDisposition_OpenExisting, &rawKey, 0) !=
+        CR_SUCCESS)
+        return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    wil::unique_hkey key(rawKey);
+    wchar_t text[64] = L"";
+    DWORD size = sizeof(text);
+    RETURN_IF_WIN32_ERROR(RegGetValueW(key.get(), nullptr, L"CustomCaptureSourceClsid", RRF_RT_REG_SZ, nullptr, text,
+                                       &size));
+    CLSID clsid{};
+    RETURN_IF_FAILED(CLSIDFromString(text, &clsid));
+
+    // Usually the class is an activator (IMFActivate); some hand out the source
+    // itself. Give the activator what Frame Server would: the device's path.
+    ComPtr<IMFActivate> activate;
+    HRESULT hr = CoCreateInstance(clsid, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&activate));
+    if (SUCCEEDED(hr))
+    {
+        // Copy everything Windows knows about the device (its enumeration entry)
+        // onto the activator, then make sure the basics are there.
+        ComPtr<IMFAttributes> filter;
+        IMFActivate** devices = nullptr;
+        UINT32 count = 0;
+        if (SUCCEEDED(MFCreateAttributes(&filter, 1)) &&
+            SUCCEEDED(filter->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID)) &&
+            SUCCEEDED(MFEnumDeviceSources(filter.get(), &devices, &count)))
+        {
+            for (UINT32 i = 0; i < count; ++i)
+            {
+                if (ToLower(GetString(devices[i], MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK)) ==
+                    ToLower(symbolicLink))
+                    devices[i]->CopyAllItems(activate.get());
+                devices[i]->Release();
+            }
+            CoTaskMemFree(devices);
+        }
+        activate->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+        activate->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, symbolicLink.c_str());
+        hr = activate->ActivateObject(IID_PPV_ARGS(&source));
+        if (FAILED(hr))
+            SC_LOG_ERROR(L"Camera: virtual camera source %s refused to start (0x%08X)", text, hr);
+        return hr;
+    }
+    hr = CoCreateInstance(clsid, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&source));
+    if (FAILED(hr))
+        SC_LOG_ERROR(L"Camera: can't create virtual camera source %s (0x%08X)", text, hr);
+    return hr;
+}
+
 HRESULT CreateDeviceSource(const std::wstring& symbolicLink, ComPtr<IMFMediaSource>& source)
 {
     ComPtr<IMFAttributes> attrs;
     RETURN_IF_FAILED(MFCreateAttributes(&attrs, 2));
     RETURN_IF_FAILED(attrs->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID));
     RETURN_IF_FAILED(attrs->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, symbolicLink.c_str()));
-    return MFCreateDeviceSource(attrs.get(), &source);
+    const HRESULT hr = MFCreateDeviceSource(attrs.get(), &source);
+    if (FAILED(hr) && IsVirtualCamera(symbolicLink))
+    {
+        const HRESULT direct = CreateVirtualCameraSource(symbolicLink, source);
+        if (SUCCEEDED(direct))
+            return direct;
+        SC_LOG_ERROR(L"Camera: opening virtual camera failed (0x%08X, direct 0x%08X)", hr, direct);
+    }
+    return hr;
 }
 
 HRESULT GetFirstVideoStreamHandler(IMFMediaSource* source, ComPtr<IMFPresentationDescriptor>& pd,
@@ -128,14 +194,18 @@ std::wstring SubtypeName(const GUID& subtype)
     return buf;
 }
 
-bool IsSmoothCamDevice(const std::wstring& name, const std::wstring& symbolicLink)
+bool IsSmoothCamDevice(const std::wstring& name, const std::wstring& /*symbolicLink*/)
 {
-    // Windows names it "SmoothCam (Windows Virtual Camera)"; all virtual cameras
-    // created with MFCreateVirtualCamera live under the VCAMDEVAPI enumerator.
-    const auto lowerName = ToLower(name);
-    const auto lowerLink = ToLower(symbolicLink);
-    return lowerName.find(L"smoothcam") != std::wstring::npos ||
-           lowerLink.find(L"vcamdevapi") != std::wstring::npos;
+    // Windows names it "SmoothCam (Windows Virtual Camera)". Only our own camera
+    // is excluded as a source: other virtual cameras - a phone connected with
+    // Phone Link, OBS, ... - are perfectly good inputs.
+    return ToLower(name).find(L"smoothcam") != std::wstring::npos;
+}
+
+bool IsVirtualCamera(const std::wstring& symbolicLink)
+{
+    // Cameras created with MFCreateVirtualCamera live under the VCAMDEVAPI enumerator.
+    return ToLower(symbolicLink).find(L"vcamdevapi") != std::wstring::npos;
 }
 
 std::vector<CameraInfo> EnumerateAllCameras()
@@ -167,6 +237,8 @@ std::vector<CameraInfo> EnumerateCameras()
 {
     auto all = EnumerateAllCameras();
     std::erase_if(all, [](const CameraInfo& c) { return IsSmoothCamDevice(c.name, c.symbolicLink); });
+    // Real cameras first, so "first camera found" doesn't pick an idle virtual one.
+    std::stable_partition(all.begin(), all.end(), [](const CameraInfo& c) { return !IsVirtualCamera(c.symbolicLink); });
     return all;
 }
 

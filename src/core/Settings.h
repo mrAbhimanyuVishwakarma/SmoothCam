@@ -72,12 +72,19 @@ enum class AutoFrame
 // Which spatial upscaler takes the picture past the camera's resolution.
 enum class Upscaler
 {
-    Fsr, // AMD FidelityFX Super Resolution 1 (any ratio)
-    Nis, // NVIDIA Image Scaling (up to 2x; bigger steps fall back to FSR)
+    Auto,    // NIS where it fits (<= 2x), FSR otherwise
+    Off,     // no upscaling: only the camera's own resolutions are offered
+    Fsr,     // AMD FidelityFX Super Resolution 1 (any ratio)
+    Nis,     // NVIDIA Image Scaling (up to 2x; bigger steps fall back to FSR)
+    Cas,     // AMD FidelityFX CAS, upscale + sharpen in one light pass (up to 2x)
+    Lanczos, // classic Lanczos-3 with anti-ringing (any ratio)
 };
 
 struct Settings
 {
+    // Master switch. Off = everything (apps and the preview) gets the plain
+    // camera: its own resolution and frame rate, no smoothing, no effects.
+    bool enabled = true;
     std::wstring device;     // symbolic link of the physical camera; empty = first camera found
     std::wstring deviceName; // friendly name, for display only
     uint32_t maxWidth = 0;   // camera's default (largest full-rate) resolution, 0 = unknown
@@ -93,7 +100,7 @@ struct Settings
     LowLightBoost lowLight = LowLightBoost::Off;
     Background background = Background::Off;
     AutoFrame autoFrame = AutoFrame::Off;
-    Upscaler upscaler = Upscaler::Fsr;
+    Upscaler upscaler = Upscaler::Auto;
     Mode mode = Mode::Quality;
     EngineChoice engine = EngineChoice::Auto;
     bool steadyFps = true;   // ask the camera to keep its frame rate in low light
@@ -118,6 +125,12 @@ const wchar_t* ToString(Background value);
 std::optional<Background> ParseBackground(std::wstring_view text);
 const wchar_t* ToString(AutoFrame value);
 std::optional<AutoFrame> ParseAutoFrame(std::wstring_view text);
+// What the engine actually runs with: `s` itself, or a plain passthrough
+// when SmoothCam is switched off.
+Settings ProcessingSettings(const Settings& s);
+// The frame rate apps are offered (the camera's own when switched off).
+uint32_t EffectiveOutputFps(const Settings& s);
+
 const wchar_t* ToString(Upscaler value);
 std::optional<Upscaler> ParseUpscaler(std::wstring_view text);
 uint32_t ClampOutputHeight(uint32_t height);

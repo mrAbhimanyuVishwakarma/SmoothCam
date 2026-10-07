@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(SmoothCam
-    VERSION 1.2.0
+    VERSION 0.0.1
     DESCRIPTION "Smooth 60 fps virtual webcam for Windows 11"
-    HOMEPAGE_URL "https://github.com/smoothcam/SmoothCam"
+    HOMEPAGE_URL "https://smoothcam.vercel.app"
     LANGUAGES CXX RC)
 
 if(NOT WIN32 OR NOT MSVC)

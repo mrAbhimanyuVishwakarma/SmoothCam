@@ -1,6 +1,6 @@
 # SmoothCam — Implementation Plan
 
-_Last updated: 8 Oct 2026 · Status: **1.2.0 beta 3 built and working** · Platform: Windows 11, x64 (ARM64 optional)_
+_Last updated: 8 Oct 2026 · Status: **v0.0.1 released (first public build)** · Website: https://smoothcam.vercel.app · Platform: Windows 11, x64 (ARM64 optional)_
 
 This is the working plan for SmoothCam. It's split into phases that each end in something
 runnable, so the project never sits in a half-broken state for long. Tick boxes as you go.
@@ -41,8 +41,26 @@ Windows 11 26H2 laptop (RTX 4060 Laptop + Intel UHD, built-in 1080p30 camera):
 | Background blur (MediaPipe selfie segmenter on Windows ML, GPU then CPU) | unit test: person sharp, background detail < 10%; live: clean outline |
 | Auto-framing (Windows FaceDetector + eased crop + FSR) | live: Close-up 1.25× at laptop distance, centred; no jitter |
 | All effects at 2560×1440, live camera (lights on, ~28 fps in) | 60 fps out, 5.5 ms GPU per frame, 0 failures |
+| 4K through the installed camera, NV12 (what Zoom/Teams/browsers take) | 59.98 fps, p99 21 ms (was 44-48 fps before the copy fix) |
+| NVIDIA Image Scaling vs FSR 1 vs bilinear, 2x test image | 44.8 / 44.0 / 42.2 dB PSNR; live 4K: 6.4 vs 4.7 ms per frame, both 60 fps |
 | Framing grids, collapse-to-settings while another app streams, desktop-shortcut task | working |
 | Unit tests | 35/35 pass |
+
+**v0.0.1 - first public release** (`dist/SmoothCam_v0.0.1.exe`), verified through the installed
+camera with `--probe --nv12 --width 0` (what Zoom/Teams/browsers do):
+
+| Check | Result |
+|---|---|
+| 4K with Auto (CAS), FSR 1, NIS, CAS, Lanczos | 59.6–60.0 fps each |
+| 2K and 4K, noise + low light + blur + close-up + compare all on | 60.0 fps, p99 26 ms |
+| SmoothCam switched off | plain camera 1920x1080 @ 30 fps, engine "Off", +6 ms |
+| Upscaler off with 4K selected | falls back to the camera's own 1920x1080 |
+| Low latency, 1080p | 60 fps, +23 ms |
+| Background blur on the live camera | edge follows hair/shoulders (joint bilateral), no halo (mask-weighted blur) |
+| Auto-framing | unit test: per-frame step change < 0.002, no overshoot (spring) |
+| Upscalers on real images (`bench --upscale-image`) | photo: FSR 46.2 > CAS 45.8 > NIS 44.8 > Lanczos 44.6 > bilinear 42.2 dB; webcam: Lanczos 52.5 > CAS 52.0 = NIS 52.0 > FSR 51.5 > bilinear 50.8 dB |
+| Unit tests | 37/37 pass |
+| Another virtual camera as input | works in-process (bench), **not** inside Frame Server: MFCreateDeviceSource gives E_NOINTERFACE, creating its source directly gives MF_E_ATTRIBUTENOTFOUND. Documented as a limitation; UI says so |
 
 Effects choices (researched for beta 3): face detection uses the inbox
 `Windows.Media.FaceAnalysis.FaceDetector` (no model to ship, runs on the CPU on a small grayscale copy every third frame);
@@ -561,7 +579,15 @@ fee). Sign up at storedeveloper.microsoft.com.
 | D13 | Preview via Direct2D DC render target | HWND render target output didn't show in the dialog child on the hybrid-GPU test laptop |
 | D14 | Inbox FaceDetector + Windows ML for effects, 460 KB Apache-2.0 model | Nothing extra to redistribute, works on every PC (GPU or CPU), effects are optional and degrade to off |
 | D15 | Effects stay in the virtual camera pipeline, grids only in the preview | Apps get the effects; grids are a composition aid, never wanted in a call |
-| D11 | Inno Setup `.exe` named `SmoothCam_beta` / `SmoothCam_beta2` / `SmoothCam_beta3` | Requested; `--register` does COM + camera + ProgramData ACL in one elevated step |
+| D16 | NVIDIA Image Scaling as a second, optional upscaler (luma only, <= 2x, else FSR) | Requested after looking at Lossless Scaling; NIS is the MIT-licensed scaler such tools offer. LSFG/LS1 are closed source and can't be used |
+| D17 | Parallel CPU copy for big frames; overload step-down ignores copy time | 4K RGB32 copies took ~6-8 ms and wrongly triggered Balanced mode |
+| D18 | Upscaler setting: Auto (CAS <= 2x, else FSR), Off, FSR 1, NIS, CAS, Lanczos | No scaler won on both photos and webcam frames; CAS is second on both and the lightest. Off removes upscaled sizes entirely |
+| D19 | On/off switch = `ProcessingSettings()` passthrough + camera's own format advertised | One place decides "plain camera"; apps that open the camera while it's off get the camera's native size and rate |
+| D20 | Compare view paints the raw camera frame in a final pass | The left half must be untouched by denoise, effects and zoom to be an honest comparison |
+| D21 | Joint bilateral mask upsampling + background-only (premultiplied) blur | Removes blobby edges and halos without a bigger model |
+| D22 | Spring (critically damped) auto-framing | First-order easing jumps in velocity; a spring starts and stops gently |
+| D23 | Only SmoothCam itself is excluded as an input; other virtual cameras are listed but flagged | Phone Link cameras were hidden; Windows still blocks vcam-in-vcam inside Frame Server |
+| D11 | Inno Setup `.exe` named `SmoothCam_beta` / `SmoothCam_beta2` / `SmoothCam_beta3` / `SmoothCam_v0.0.1` | Requested; `--register` does COM + camera + ProgramData ACL in one elevated step |
 | S2, S3 | Done | Wrapping the camera and running D3D11 + NVOF inside Frame Server both work |
 | S1, S4 | Pending | Camera works through Frame Server for MF clients; Teams/OBS/DirectShow still to try by hand |
 

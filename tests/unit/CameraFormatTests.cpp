@@ -49,9 +49,12 @@ TEST(CameraFormat, SkipsUnusableFormats)
     EXPECT_EQ(ChooseCameraFormat({}, 1280, 720, 60), SIZE_MAX);
 }
 
-TEST(CameraFormat, ExcludesVirtualCameras)
+TEST(CameraFormat, ExcludesOnlyItselfAsSource)
 {
     EXPECT_TRUE(IsSmoothCamDevice(L"SmoothCam (Windows Virtual Camera)", L""));
-    EXPECT_TRUE(IsSmoothCamDevice(L"Other", L"\\\\?\\SWD#VCAMDEVAPI#{abc}"));
+    // Other virtual cameras (a phone via Phone Link, OBS) are valid inputs.
+    EXPECT_FALSE(IsSmoothCamDevice(L"Phone Link camera", L"\\\\?\\SWD#VCAMDEVAPI#{abc}"));
+    EXPECT_TRUE(IsVirtualCamera(L"\\\\?\\SWD#VCAMDEVAPI#{abc}"));
+    EXPECT_FALSE(IsVirtualCamera(L"\\\\?\\USB#VID_04F2&PID_B7E0"));
     EXPECT_FALSE(IsSmoothCamDevice(L"Integrated Camera", L"\\\\?\\USB#VID_04F2&PID_B7E0"));
 }

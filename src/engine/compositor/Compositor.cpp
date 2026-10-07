@@ -3,10 +3,13 @@
 #include "BgComposite.h"
 #include "BgDown.h"
 #include "Blur.h"
+#include "CasUpscale.h"
+#include "CompareRaw.h"
 #include "Composite.h"
 #include "FsrConstants.h"
 #include "FsrEasu.h"
 #include "FsrRcas.h"
+#include "Lanczos.h"
 #include "LowLight.h"
 #include "NisConstants.h"
 #include "NisScaler.h"
@@ -35,6 +38,9 @@ HRESULT Compositor::Init(const GpuDevice& gpu)
     RETURN_IF_FAILED(gpu.CreateShader(g_Blur, sizeof(g_Blur), m_blur));
     RETURN_IF_FAILED(gpu.CreateShader(g_BgComposite, sizeof(g_BgComposite), m_bgComposite));
     RETURN_IF_FAILED(gpu.CreateShader(g_NisScaler, sizeof(g_NisScaler), m_nis));
+    RETURN_IF_FAILED(gpu.CreateShader(g_CasUpscale, sizeof(g_CasUpscale), m_cas));
+    RETURN_IF_FAILED(gpu.CreateShader(g_Lanczos, sizeof(g_Lanczos), m_lanczos));
+    RETURN_IF_FAILED(gpu.CreateShader(g_CompareRaw, sizeof(g_CompareRaw), m_compare));
     RETURN_IF_FAILED(CreateLinearClampSampler(gpu.Device(), m_sampler));
     auto* d = gpu.Device();
 
@@ -55,6 +61,9 @@ HRESULT Compositor::Init(const GpuDevice& gpu)
         RETURN_IF_FAILED(d->CreateShaderResourceView(tex->tex.get(), nullptr, &tex->srv));
     }
     RETURN_IF_FAILED(m_nisCb.Create(d));
+    RETURN_IF_FAILED(m_casCb.Create(d));
+    RETURN_IF_FAILED(m_lanczosCb.Create(d));
+    RETURN_IF_FAILED(m_compareCb.Create(d));
     RETURN_IF_FAILED(m_compositeCb.Create(d));
     RETURN_IF_FAILED(m_bgraCb.Create(d));
     RETURN_IF_FAILED(m_easuCb.Create(d));
@@ -101,6 +110,38 @@ HRESULT Compositor::EnsureOutput(uint32_t width, uint32_t height, bool rgb32)
     return S_OK;
 }
 
+Upscaler Compositor::PickUpscaler(Upscaler wanted) const
+{
+    const bool nisFits = NisCanScale(m_renderW, m_renderH, m_width, m_height);
+    const bool casFits = CasCanScale(static_cast<float>(m_renderW), static_cast<float>(m_renderH),
+                                     static_cast<float>(m_width), static_cast<float>(m_height));
+    switch (wanted)
+    {
+    case Upscaler::Nis: return nisFits ? Upscaler::Nis : Upscaler::Fsr;
+    case Upscaler::Cas: return casFits ? Upscaler::Cas : Upscaler::Fsr;
+    case Upscaler::Lanczos: return Upscaler::Lanczos;
+    case Upscaler::Fsr: return Upscaler::Fsr;
+    case Upscaler::Auto:
+    default:
+        // Measured on photos and webcam frames (bench --upscale-image): no
+        // scaler wins everywhere, CAS is a close second on both and the
+        // lightest. Beyond 2x, FSR (any ratio, noise-aware sharpening).
+        return casFits ? Upscaler::Cas : Upscaler::Fsr;
+    }
+}
+
+const wchar_t* Compositor::UpscalerName() const
+{
+    switch (m_used)
+    {
+    case Upscaler::Fsr: return L"FSR 1";
+    case Upscaler::Nis: return L"NIS";
+    case Upscaler::Cas: return L"CAS";
+    case Upscaler::Lanczos: return L"Lanczos";
+    default: return L"";
+    }
+}
+
 HRESULT Compositor::EnsureRender(uint32_t w, uint32_t h)
 {
     RETURN_IF_FAILED(m_render[0].Create(m_gpu->Device(), w, h));
@@ -122,7 +163,9 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
     // with FSR 1 instead of stretching it bilinearly.
     const float cropW = prev.width * params.cropScale[0];
     const float cropH = prev.height * params.cropScale[1];
-    const bool upscale = m_width > cropW * 1.1f || m_height > cropH * 1.1f;
+    // Upscaler off: render straight at output size (a plain bilinear stretch).
+    const bool upscale =
+        params.upscaler != Upscaler::Off && (m_width > cropW * 1.1f || m_height > cropH * 1.1f);
     if (upscale)
     {
         // Even sizes keep the NV12 chroma grid aligned.
@@ -149,7 +192,7 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
     cb.cropScaleY = params.cropScale[1];
     cb.alpha = params.alpha;
     cb.mode = static_cast<uint32_t>(params.mode);
-    cb.compare = params.compare ? 1u : 0u;
+    cb.compare = 0; // the compare view is painted at the end, from the raw frame
     cb.confGain = 1.6f;
     m_compositeCb.Update(context, cb);
     RunCompute(context, m_composite.get(), m_compositeCb.Get(),
@@ -173,11 +216,11 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
     const Texture* curUV = &cur->uv;
 
     // 3. Upscale to the output size.
-    m_usedNis = upscale && params.useNis && NisCanScale(m_renderW, m_renderH, m_width, m_height);
+    m_used = upscale ? PickUpscaler(params.upscaler) : Upscaler::Off;
     if (upscale)
     {
         PlanarFrame& dst = m_out[0];
-        if (m_usedNis)
+        if (m_used == Upscaler::Nis)
         {
             // NIS's own sharpening, from our RCAS strength (stops, 0 = strongest).
             const float nisSharpness =
@@ -195,6 +238,26 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
                        {curY->srv.get(), m_nisCoefScale.srv.get(), m_nisCoefUsm.srv.get()}, {dst.y.uav.get()},
                        m_sampler.get(), (m_width + kNisBlockWidth - 1) / kNisBlockWidth,
                        (m_height + kNisBlockHeight - 1) / kNisBlockHeight, 1);
+        }
+        else if (m_used == Upscaler::Cas)
+        {
+            // CAS sharpness is 0..1 (1 = strongest); map from RCAS stops.
+            const float casSharpness =
+                params.sharpness < 0.0f ? 0.0f : std::clamp(1.0f - params.sharpness, 0.0f, 1.0f);
+            CasCb cas{};
+            ComputeCasConstants(cas.con, casSharpness, static_cast<float>(m_renderW), static_cast<float>(m_renderH),
+                                static_cast<float>(m_width), static_cast<float>(m_height));
+            cas.outW = m_width;
+            cas.outH = m_height;
+            m_casCb.Update(context, cas);
+            RunCompute(context, m_cas.get(), m_casCb.Get(), {curY->srv.get()}, {dst.y.uav.get()}, nullptr, m_width,
+                       m_height);
+        }
+        else if (m_used == Upscaler::Lanczos)
+        {
+            m_lanczosCb.Update(context, {m_renderW, m_renderH, m_width, m_height});
+            RunCompute(context, m_lanczos.get(), m_lanczosCb.Get(), {curY->srv.get()}, {dst.y.uav.get()}, nullptr,
+                       m_width, m_height);
         }
         else
         {
@@ -219,9 +282,10 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
     {
         const uint32_t lw = m_bgLow.width;
         const uint32_t lh = m_bgLow.height;
-        m_bgDownCb.Update(context, {lw, lh, m_width, m_height});
-        RunCompute(context, m_bgDown.get(), m_bgDownCb.Get(), {curY->srv.get(), curUV->srv.get()},
-                   {m_bgLow.uav.get()}, nullptr, lw, lh);
+        m_bgDownCb.Update(context, {lw, lh, m_width, m_height, params.cropOffset[0], params.cropOffset[1],
+                                    params.cropScale[0], params.cropScale[1]});
+        RunCompute(context, m_bgDown.get(), m_bgDownCb.Get(), {curY->srv.get(), curUV->srv.get(), params.personMask},
+                   {m_bgLow.uav.get()}, m_sampler.get(), lw, lh);
         for (int pass = 0; pass < std::max(1, params.blurPasses); ++pass)
         {
             m_blurCb.Update(context, {lw, lh, 1, 0});
@@ -247,8 +311,8 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
         curUV = &dst.uv;
     }
 
-    // 5. Sharpen luma (NIS already did).
-    if (params.sharpness >= 0.0f && !m_usedNis)
+    // 5. Sharpen luma (NIS and CAS already did).
+    if (params.sharpness >= 0.0f && m_used != Upscaler::Nis && m_used != Upscaler::Cas)
     {
         PlanarFrame& dst = OtherOutput(curY);
         RcasCb rcas{};
@@ -263,6 +327,22 @@ void Compositor::Compose(const FrameView& prev, const FrameView& next, const Tex
 
     m_finalY = curY;
     m_finalUV = curUV;
+
+    // 6. Compare view: paint the left half from the untouched camera frame.
+    if (params.compare && params.raw.srvY && params.raw.srvUV)
+    {
+        CompareCb cc{};
+        cc.outW = m_width;
+        cc.outH = m_height;
+        cc.cropOffX = params.rawCropOffset[0];
+        cc.cropOffY = params.rawCropOffset[1];
+        cc.cropScaleX = params.rawCropScale[0];
+        cc.cropScaleY = params.rawCropScale[1];
+        m_compareCb.Update(context, cc);
+        // One thread per 2x2 quad, covering the left half plus the divider.
+        RunCompute(context, m_compare.get(), m_compareCb.Get(), {params.raw.srvY, params.raw.srvUV},
+                   {curY->uav.get(), curUV->uav.get()}, m_sampler.get(), (m_width / 2 + 4) / 2, (m_height + 1) / 2);
+    }
 
     if (m_rgb32)
     {

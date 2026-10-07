@@ -254,6 +254,18 @@ struct VisionWorker::Impl
         std::vector<float> input(static_cast<size_t>(w) * h * 3);
         const float sx = static_cast<float>(img.width) / w;
         const float sy = static_cast<float>(img.height) / h;
+        // The model was trained on well-lit photos; in a dim room it sees a
+        // dark, flat image and gets unsure about the edges. Brighten its copy
+        // to a normal exposure first (the video itself is untouched).
+        double sum = 0;
+        for (uint32_t y = 0; y < img.height; y += 2)
+            for (uint32_t x = 0; x < img.width; x += 2)
+            {
+                const uint8_t* p = img.pixels.data() + (static_cast<size_t>(y) * img.width + x) * img.channels;
+                sum += 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+            }
+        const double mean = sum / (((img.height + 1) / 2) * ((img.width + 1) / 2)) / 255.0;
+        const float gain = static_cast<float>(std::clamp(0.45 / std::max(mean, 0.01), 1.0, 4.0));
         for (uint32_t y = 0; y < h; ++y)
         {
             for (uint32_t x = 0; x < w; ++x)
@@ -262,7 +274,7 @@ struct VisionWorker::Impl
                 const float py = (y + 0.5f) * sy - 0.5f;
                 for (uint32_t c = 0; c < 3; ++c)
                 {
-                    const float v = Sample(img, px, py, c) / 255.0f;
+                    const float v = std::min(1.0f, Sample(img, px, py, c) / 255.0f * gain);
                     if (nchw)
                         input[(static_cast<size_t>(c) * h + y) * w + x] = v;
                     else
@@ -290,8 +302,12 @@ struct VisionWorker::Impl
             float p = values.GetAt(channels == 1 ? i : i * channels + (channels - 1));
             if (p < 0.0f || p > 1.0f)
                 p = 1.0f / (1.0f + std::exp(-p)); // logits
-            // Light temporal smoothing hides flicker on hair and hands.
-            smoothedMask[i] = first ? p : smoothedMask[i] * 0.4f + p * 0.6f;
+            // Temporal smoothing hides flicker on hair and hands, but where
+            // the mask really changed (you moved) the new value wins at once,
+            // so the blur doesn't trail behind.
+            const float change = std::abs(p - smoothedMask[i]);
+            const float take = first ? 1.0f : 0.35f + 0.6f * std::min(1.0f, change * 3.0f);
+            smoothedMask[i] += (p - smoothedMask[i]) * take;
             out[i] = static_cast<uint8_t>(std::clamp(smoothedMask[i], 0.0f, 1.0f) * 255.0f + 0.5f);
         }
         std::lock_guard g(lock);

@@ -72,6 +72,10 @@ private:
     void PreviewLoop(uint32_t preferredWidth);
     void PaintPreview(HDC dc);
 
+    void DrawEnableSwitch(const DRAWITEMSTRUCT& item) const;
+    void OnEnableClicked();
+    void UpdateEnabledControls();
+
     void CreateFonts();
     void ApplyTheme();
     HBRUSH OnColor(HDC dc, HWND control);

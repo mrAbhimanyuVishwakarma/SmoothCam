@@ -168,6 +168,36 @@ TEST(AutoFramer, ZoomsTowardsTheFaceAndBackOut)
     EXPECT_NEAR(crop.h, 1.0f, 0.02f);
 }
 
+TEST(AutoFramer, MovesWithoutJerks)
+{
+    // A camera operator accelerates gently: the per-frame step never jumps,
+    // even when the face suddenly appears far from the current view.
+    AutoFramer framer;
+    framer.SetMode(AutoFrame::Close);
+    const CropRect base{0, 0, 1, 1};
+    const float aspect = 16.0f / 9.0f;
+    const std::vector<FaceBox> faces = {{0.70f, 0.25f, 0.12f, 0.22f}};
+    Hns t = 0;
+    float prevX = 0.5f, prevStep = 0.0f, worstChange = 0.0f, worstOvershoot = 0.0f;
+    CropRect crop{};
+    for (int i = 0; i < 300; ++i)
+    {
+        t += kHnsPerSecond / 60;
+        crop = framer.Update(faces, t, t, base, aspect, aspect);
+        const float cx = crop.x + crop.w / 2;
+        const float step = cx - prevX;
+        if (i > 0)
+            worstChange = std::max(worstChange, std::abs(step - prevStep));
+        prevStep = step;
+        prevX = cx;
+        worstOvershoot = std::max(worstOvershoot, cx - 0.78f);
+    }
+    // Exponential easing would jump by ~1% of the frame on the first frame.
+    EXPECT_LT(worstChange, 0.002f);
+    EXPECT_LT(worstOvershoot, 0.02f);
+    EXPECT_NEAR(crop.x + crop.w / 2, 0.76f, 0.03f);
+}
+
 TEST(AutoFramer, IgnoresSmallHeadMovements)
 {
     AutoFramer framer;

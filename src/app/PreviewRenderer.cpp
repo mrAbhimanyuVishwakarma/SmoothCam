@@ -24,6 +24,14 @@ void PreviewRenderer::SetDpi(UINT dpi)
 {
     m_dpi = dpi ? dpi : 96;
     m_textFormat.reset();
+    m_labelFormat.reset();
+    if (SUCCEEDED(m_dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                             13.0f * m_dpi / 96.0f, L"", &m_labelFormat)))
+    {
+        m_labelFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        m_labelFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
     // The render target works in physical pixels, so size the font for this DPI.
     if (SUCCEEDED(m_dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
                                              DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
@@ -46,6 +54,8 @@ HRESULT PreviewRenderer::EnsureTarget()
     RETURN_IF_FAILED(m_target->QueryInterface(IID_PPV_ARGS(&m_context)));
     RETURN_IF_FAILED(m_target->CreateSolidColorBrush(D2D1::ColorF(0.62f, 0.62f, 0.64f), &m_textBrush));
     RETURN_IF_FAILED(m_target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f), &m_gridBrush));
+    RETURN_IF_FAILED(m_target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f), &m_labelBack));
+    RETURN_IF_FAILED(m_target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), &m_labelText));
     m_bitmap.reset();
     m_bitmapW = m_bitmapH = 0;
     return S_OK;
@@ -56,6 +66,8 @@ void PreviewRenderer::DiscardTarget()
     m_bitmap.reset();
     m_textBrush.reset();
     m_gridBrush.reset();
+    m_labelBack.reset();
+    m_labelText.reset();
     m_context.reset();
     m_target.reset();
     m_bitmapW = m_bitmapH = 0;
@@ -107,6 +119,33 @@ void PreviewRenderer::DrawGrid(const D2D1_RECT_F& r)
     }
 }
 
+void PreviewRenderer::DrawLabels(const D2D1_RECT_F& r)
+{
+    if (!m_labelFormat || !m_labelBack || (m_labelLeft.empty() && m_labelRight.empty()))
+        return;
+    const float s = m_dpi / 96.0f;
+    const float pad = 10.0f * s;
+    const float h = 26.0f * s;
+    auto label = [&](const std::wstring& text, bool right) {
+        if (text.empty())
+            return;
+        wil::com_ptr_nothrow<IDWriteTextLayout> layout;
+        if (FAILED(m_dwrite->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), m_labelFormat.get(),
+                                              (r.right - r.left) / 2, h, &layout)))
+            return;
+        DWRITE_TEXT_METRICS m{};
+        layout->GetMetrics(&m);
+        const float w = m.width + 2 * pad;
+        const float x = right ? r.right - pad - w : r.left + pad;
+        const float y = r.top + pad;
+        m_target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), 6 * s, 6 * s),
+                                       m_labelBack.get());
+        m_target->DrawTextLayout(D2D1::Point2F(x + pad, y), layout.get(), m_labelText.get());
+    };
+    label(m_labelLeft, false);
+    label(m_labelRight, true);
+}
+
 void PreviewRenderer::Paint(HDC dc, const uint8_t* pixels, uint32_t width, uint32_t height, bool frameChanged,
                             const std::wstring& message)
 {
@@ -151,6 +190,7 @@ void PreviewRenderer::Paint(HDC dc, const uint8_t* pixels, uint32_t width, uint3
             const D2D1_RECT_F dest = D2D1::RectF((sw - w) / 2, (sh - h) / 2, (sw + w) / 2, (sh + h) / 2);
             m_context->DrawBitmap(m_bitmap.get(), &dest, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr);
             DrawGrid(dest);
+            DrawLabels(dest);
         }
     }
     else if (m_textFormat && !message.empty())

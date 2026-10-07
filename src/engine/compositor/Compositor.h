@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Settings.h"
 #include "gpu/Gpu.h"
 
 namespace smoothcam
@@ -16,16 +17,22 @@ struct ComposeParams
 {
     ComposeMode mode = ComposeMode::Hold;
     float alpha = 0;
+    // Compare view: the left half shows `raw` (the camera frame as delivered)
+    // plainly stretched over the region `rawCrop*`, with a divider.
     bool compare = false;
+    FrameView raw;
+    float rawCropOffset[2] = {0, 0};
+    float rawCropScale[2] = {1, 1};
     // Region of the source frame that becomes the output (aspect crop, and
     // auto-framing zoom), in normalized source coordinates.
     float cropOffset[2] = {0, 0};
     float cropScale[2] = {1, 1};
     // RCAS sharpening in stops (0 = strongest); negative = no sharpening.
     float sharpness = -1.0f;
-    // Upscale with NVIDIA Image Scaling instead of FSR 1 where it can (<= 2x).
-    // NIS sharpens while scaling, so RCAS is skipped after it.
-    bool useNis = false;
+    // Spatial upscaler for frames bigger than the camera's pixels. NIS and CAS
+    // sharpen while scaling, so RCAS is skipped after them; they only handle
+    // up to 2x and fall back to FSR beyond. Off = plain bilinear stretch.
+    Upscaler upscaler = Upscaler::Auto;
 
     // Low-light boost. Off when maxGain <= 1.
     float lowLightTarget = 0.0f;
@@ -40,7 +47,8 @@ struct ComposeParams
 // Builds the output frame on the GPU and copies it into a CPU buffer in the
 // layout Media Foundation expects (NV12 or RGB32).
 //
-//   interpolate -> low-light boost -> FSR / NIS upscale -> background blur -> sharpen
+//   interpolate -> low-light boost -> upscale (FSR / NIS / CAS / Lanczos)
+//               -> background blur -> sharpen
 //
 // Each stage is skipped when it isn't needed.
 class Compositor
@@ -70,8 +78,8 @@ public:
     uint32_t RenderWidth() const { return m_renderW; }
     uint32_t RenderHeight() const { return m_renderH; }
     bool Upscaled() const { return m_renderW < m_width || m_renderH < m_height; }
-    // Which upscaler built the last frame ("FSR 1" / "NIS"), if any.
-    const wchar_t* UpscalerName() const { return !Upscaled() ? L"" : m_usedNis ? L"NIS" : L"FSR 1"; }
+    // Which upscaler built the last frame, or "" if none ran.
+    const wchar_t* UpscalerName() const;
 
 private:
     struct CompositeCb
@@ -103,6 +111,24 @@ private:
         uint32_t w, h;
         uint32_t pad[2];
     };
+    struct CompareCb
+    {
+        uint32_t outW, outH;
+        float cropOffX, cropOffY;
+        float cropScaleX, cropScaleY;
+        uint32_t pad[2];
+    };
+    struct CasCb
+    {
+        uint32_t con[8];
+        uint32_t outW, outH;
+        uint32_t pad[2];
+    };
+    struct LanczosCb
+    {
+        uint32_t inW, inH;
+        uint32_t outW, outH;
+    };
     struct NisCb
     {
         uint8_t data[256]; // NISConfig, filled by ComputeNisConstants
@@ -122,6 +148,8 @@ private:
     {
         uint32_t outW, outH;
         uint32_t inW, inH;
+        float cropOffX, cropOffY;
+        float cropScaleX, cropScaleY;
     };
     struct BlurCb
     {
@@ -137,6 +165,7 @@ private:
     };
 
     HRESULT EnsureRender(uint32_t w, uint32_t h);
+    Upscaler PickUpscaler(Upscaler wanted) const;
     PlanarFrame& OtherOutput(const Texture* inUse);
 
     const GpuDevice* m_gpu = nullptr;
@@ -148,7 +177,11 @@ private:
     ConstantBuffer<EasuCb> m_easuCb;
     ConstantBuffer<RcasCb> m_rcasCb;
     ConstantBuffer<NisCb> m_nisCb;
-    ComPtr<ID3D11ComputeShader> m_nis;
+    ConstantBuffer<CasCb> m_casCb;
+    ConstantBuffer<CompareCb> m_compareCb;
+    ComPtr<ID3D11ComputeShader> m_compare;
+    ConstantBuffer<LanczosCb> m_lanczosCb;
+    ComPtr<ID3D11ComputeShader> m_nis, m_cas, m_lanczos;
     Texture m_nisCoefScale, m_nisCoefUsm;
     struct
     {
@@ -175,6 +208,6 @@ private:
     uint32_t m_renderH = 0;
     bool m_rgb32 = false;
     double m_lastCopyMs = 0;
-    bool m_usedNis = false;
+    Upscaler m_used = Upscaler::Off; // what built the last frame (Off = none)
 };
 } // namespace smoothcam

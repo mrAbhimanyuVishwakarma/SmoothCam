@@ -78,6 +78,65 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+## AMD FidelityFX Contrast Adaptive Sharpening (CAS)
+
+- File: `third_party/cas/ffx_cas.h` (uses `ffx_a.h` from the FSR 1 section above)
+- Source: https://github.com/GPUOpen-Effects/FidelityFX-CAS
+- Shipped: compiled into SmoothCamSource.dll (the CAS upscaler shader, also the "Auto" upscaler)
+
+```
+Copyright (c) 2020 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## NVIDIA Image Scaling SDK (NIS) v1.0.3
+
+- Files: `third_party/nis/NIS_Scaler.h`, `third_party/nis/NIS_Config.h`
+- Source: https://github.com/NVIDIAGameWorks/NVIDIAImageScaling
+- Modifications: `NIS_Scaler.h` gained an `NIS_LUMA_ONLY` option so the NV12 path outputs scaled luma
+  only (marked "SmoothCam modification" in the file). `NIS_Config.h` is unchanged.
+- Shipped: compiled into SmoothCamSource.dll (the optional NIS upscaler shader and its filter tables)
+
+```
+The MIT License(MIT)
+
+Copyright(c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files(the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and / or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions :
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ## MediaPipe Selfie Segmentation model (landscape)
 
 - File: `models/selfie_segmenter.onnx` (installed next to SmoothCamSource.dll)

@@ -12,6 +12,7 @@
 #include <dwmapi.h>
 #include <mfapi.h>
 #include <mferror.h>
+#include <shellapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
 
@@ -32,6 +33,7 @@ constexpr wchar_t kUiKey[] = L"Software\\SmoothCam";
 
 // Layout metrics, in DIPs.
 constexpr int kPanelWidth = 340;
+constexpr wchar_t kWebsite[] = L"https://smoothcam.vercel.app";
 constexpr int kPad = 20;
 constexpr int kMargin = 12;
 constexpr int kButtonHeight = 30;
@@ -87,6 +89,14 @@ constexpr Choice<AutoFrame> kAutoFrames[] = {
     {AutoFrame::Wide, L"Follow face"},
     {AutoFrame::Close, L"Close-up"},
 };
+constexpr Choice<Upscaler> kUpscalers[] = {
+    {Upscaler::Auto, L"Auto (recommended)"},
+    {Upscaler::Off, L"Off (camera sizes only)"},
+    {Upscaler::Fsr, L"AMD FSR 1"},
+    {Upscaler::Nis, L"NVIDIA NIS (any GPU)"},
+    {Upscaler::Cas, L"AMD CAS (lightest)"},
+    {Upscaler::Lanczos, L"Lanczos (classic)"},
+};
 constexpr Choice<FramingGrid> kGrids[] = {
     {FramingGrid::Off, L"Off"},
     {FramingGrid::RuleOfThirds, L"Rule of thirds"},
@@ -97,17 +107,27 @@ constexpr Choice<FramingGrid> kGrids[] = {
 
 // Controls that live in the settings panel (everything else is camera area).
 constexpr int kPanelControls[] = {
-    IDC_LOGO,           IDC_TITLE,          IDC_SUBTITLE,         IDC_COLLAPSE,    IDC_LABEL_CAMERA,
+    IDC_ENABLE,         IDC_LOGO,           IDC_TITLE,          IDC_SUBTITLE,         IDC_COLLAPSE,    IDC_LABEL_CAMERA,
     IDC_CAMERA,         IDC_LABEL_FPS,      IDC_FPS,              IDC_LABEL_MODE,  IDC_MODE,
     IDC_MODE_HINT,      IDC_LABEL_RES,      IDC_RESOLUTION,       IDC_LABEL_ENGINE, IDC_ENGINE,
     IDC_LABEL_SHARP,    IDC_SHARPNESS,      IDC_EFFECTS_HEADER,   IDC_LABEL_NOISE, IDC_NOISE,
     IDC_LABEL_LOWLIGHT, IDC_LOWLIGHT,       IDC_LABEL_BACKGROUND, IDC_BACKGROUND,  IDC_LABEL_AUTOFRAME,
     IDC_AUTOFRAME,      IDC_LABEL_GRID,     IDC_GRID,             IDC_STEADY,      IDC_COMPARE,
-    IDC_FPS_NOTE,       IDC_REG_STATUS,     IDC_ABOUT,            IDC_REPAIR,
+    IDC_FPS_NOTE,       IDC_REG_STATUS,     IDC_ABOUT,            IDC_REPAIR,      IDC_LABEL_UPSCALER,
+    IDC_WEBSITE,
+    IDC_UPSCALER,
 };
 
+// Settings that only matter while SmoothCam is on.
+constexpr int kProcessingControls[] = {IDC_FPS,      IDC_MODE,       IDC_RESOLUTION, IDC_UPSCALER,
+                                       IDC_SHARPNESS, IDC_NOISE,     IDC_LOWLIGHT,   IDC_BACKGROUND,
+                                       IDC_AUTOFRAME, IDC_ENGINE,    IDC_COMPARE,    IDC_LABEL_FPS,
+                                       IDC_LABEL_MODE, IDC_LABEL_RES, IDC_LABEL_UPSCALER, IDC_LABEL_SHARP,
+                                       IDC_LABEL_NOISE, IDC_LABEL_LOWLIGHT, IDC_LABEL_BACKGROUND,
+                                       IDC_LABEL_AUTOFRAME, IDC_LABEL_ENGINE, IDC_MODE_HINT};
+
 constexpr int kCombos[] = {IDC_CAMERA, IDC_FPS,      IDC_MODE,       IDC_RESOLUTION, IDC_ENGINE, IDC_SHARPNESS,
-                           IDC_NOISE,  IDC_LOWLIGHT, IDC_BACKGROUND, IDC_AUTOFRAME,  IDC_GRID};
+                           IDC_NOISE,  IDC_LOWLIGHT, IDC_BACKGROUND, IDC_AUTOFRAME,  IDC_GRID,   IDC_UPSCALER};
 
 bool SystemUsesDarkTheme()
 {
@@ -277,6 +297,15 @@ INT_PTR MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam)
         OnCommand(LOWORD(wParam), HIWORD(wParam));
         return TRUE;
 
+    case WM_DRAWITEM:
+        if (wParam == IDC_ENABLE)
+        {
+            DrawEnableSwitch(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+            SetWindowLongPtrW(m_hwnd, DWLP_MSGRESULT, TRUE);
+            return TRUE;
+        }
+        break;
+
     case WM_TIMER:
         if (wParam == kStatusTimer)
             RefreshStatus();
@@ -301,7 +330,7 @@ INT_PTR MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam)
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
         mmi->ptMinTrackSize.x = Scale(m_collapsed ? kPanelWidth + 16 : (m_panelVisible ? kPanelWidth : 0) + 420);
-        mmi->ptMinTrackSize.y = Scale(m_panelVisible || m_collapsed ? 760 : 360);
+        mmi->ptMinTrackSize.y = Scale(m_panelVisible || m_collapsed ? 820 : 360);
         return TRUE;
     }
 
@@ -390,6 +419,22 @@ void MainWindow::OnInit()
     LoadUiState();
     m_renderer.SetGrid(m_grid);
 
+    // Like other Windows apps: no focus boxes until the keyboard is used.
+    SendMessageW(m_hwnd, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
+
+    // The switch has no visible label; a tooltip says what it does.
+    HWND tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP, CW_USEDEFAULT,
+                               CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, m_hwnd, nullptr, m_instance, nullptr);
+    if (tip)
+    {
+        TTTOOLINFOW ti{sizeof(ti)};
+        ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        ti.hwnd = m_hwnd;
+        ti.uId = reinterpret_cast<UINT_PTR>(GetDlgItem(m_hwnd, IDC_ENABLE));
+        ti.lpszText = const_cast<wchar_t*>(L"Turn SmoothCam on or off. Off: apps get your plain camera.");
+        SendMessageW(tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+    }
+
     HICON big = static_cast<HICON>(LoadImageW(m_instance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
     SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
     HICON smallIcon = nullptr;
@@ -402,7 +447,7 @@ void MainWindow::OnInit()
     GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
     const RECT work = mi.rcWork;
     const int ww = std::min<int>(Scale(1240), (work.right - work.left) * 9 / 10);
-    const int wh = std::min<int>(Scale(840), (work.bottom - work.top) * 19 / 20);
+    const int wh = std::min<int>(Scale(900), (work.bottom - work.top) * 19 / 20);
     SetWindowPos(m_hwnd, nullptr, work.left + ((work.right - work.left) - ww) / 2,
                  work.top + ((work.bottom - work.top) - wh) / 2, ww, wh, SWP_NOZORDER);
 
@@ -476,7 +521,7 @@ void MainWindow::ApplyTheme()
 
     for (int id : kCombos)
         SetWindowTheme(GetDlgItem(m_hwnd, id), m_dark ? L"DarkMode_CFD" : nullptr, nullptr);
-    for (int id : {IDC_PREVIEW_BTN, IDC_FULLSCREEN, IDC_TOGGLE_PANEL, IDC_REPAIR, IDC_ABOUT, IDC_COLLAPSE})
+    for (int id : {IDC_PREVIEW_BTN, IDC_FULLSCREEN, IDC_TOGGLE_PANEL, IDC_REPAIR, IDC_ABOUT, IDC_COLLAPSE, IDC_WEBSITE})
         SetWindowTheme(GetDlgItem(m_hwnd, id), m_dark ? L"DarkMode_Explorer" : nullptr, nullptr);
     // Themed checkboxes ignore the text color; in dark mode draw them classic.
     for (int id : {IDC_STEADY, IDC_COMPARE})
@@ -499,7 +544,9 @@ HBRUSH MainWindow::OnColor(HDC dc, HWND control)
     const bool subtle = id == IDC_SUBTITLE || id == IDC_MODE_HINT || id == IDC_FPS_NOTE || id == IDC_REG_STATUS ||
                         id == IDC_STATUS;
     const bool panel = IsInPanel(control);
-    SetTextColor(dc, subtle ? m_subtleColor : m_textColor);
+    // Greyed out while SmoothCam is switched off.
+    const COLORREF disabled = m_dark ? RGB(105, 105, 112) : RGB(165, 165, 172);
+    SetTextColor(dc, control && !IsWindowEnabled(control) ? disabled : subtle ? m_subtleColor : m_textColor);
     SetBkColor(dc, panel ? m_panelColor : m_baseColor);
     return panel ? m_panelBrush : m_baseBrush;
 }
@@ -543,11 +590,14 @@ void MainWindow::Layout()
     const int px = panel.left + Scale(kPad);
     const int pw = std::min<int>((panel.right - panel.left) - 2 * Scale(kPad), Scale(kPanelWidth - 2 * kPad));
     int y = Scale(kPad - 4);
+    // Header: logo, name and the on/off switch; "Hide preview" below it.
     place(IDC_LOGO, px, y, Scale(40), Scale(40), show);
-    place(IDC_TITLE, px + Scale(50), y - Scale(2), pw - Scale(50) - Scale(104), Scale(28), show);
-    place(IDC_COLLAPSE, px + pw - Scale(100), y, Scale(100), Scale(26), show);
+    place(IDC_TITLE, px + Scale(50), y - Scale(2), pw - Scale(50) - Scale(64), Scale(28), show);
+    place(IDC_ENABLE, px + pw - Scale(56), y, Scale(56), Scale(32), show);
     place(IDC_SUBTITLE, px + Scale(50), y + Scale(26), pw - Scale(50), line, show);
-    y += Scale(56);
+    y += Scale(54);
+    place(IDC_COLLAPSE, px, y, pw, Scale(28), show);
+    y += Scale(40);
 
     auto single = [&](int labelId, int comboId) {
         place(labelId, px, y, pw, line, show);
@@ -571,21 +621,22 @@ void MainWindow::Layout()
     place(IDC_MODE_HINT, px, y - Scale(4), pw, line * 2, show);
     y += line * 2 + Scale(6);
     single(IDC_LABEL_RES, IDC_RESOLUTION);
-    pair(IDC_LABEL_ENGINE, IDC_ENGINE, IDC_LABEL_SHARP, IDC_SHARPNESS);
+    pair(IDC_LABEL_UPSCALER, IDC_UPSCALER, IDC_LABEL_SHARP, IDC_SHARPNESS);
 
     place(IDC_EFFECTS_HEADER, px, y + Scale(2), pw, line + Scale(4), show);
     y += line + Scale(10);
     pair(IDC_LABEL_NOISE, IDC_NOISE, IDC_LABEL_LOWLIGHT, IDC_LOWLIGHT);
     pair(IDC_LABEL_BACKGROUND, IDC_BACKGROUND, IDC_LABEL_AUTOFRAME, IDC_AUTOFRAME);
-    single(IDC_LABEL_GRID, IDC_GRID);
+    pair(IDC_LABEL_ENGINE, IDC_ENGINE, IDC_LABEL_GRID, IDC_GRID);
     place(IDC_STEADY, px, y, pw, line + Scale(4), show);
     y += line + Scale(8);
     place(IDC_COMPARE, px, y, pw, line + Scale(4), show);
     y += line + Scale(10);
 
     const int bottom = client.bottom - Scale(kPad);
-    place(IDC_ABOUT, px, bottom - buttonH, Scale(88), buttonH, show);
-    place(IDC_REPAIR, px + pw - Scale(140), bottom - buttonH, Scale(140), buttonH, show);
+    place(IDC_ABOUT, px, bottom - buttonH, Scale(76), buttonH, show);
+    place(IDC_WEBSITE, px + Scale(84), bottom - buttonH, Scale(84), buttonH, show);
+    place(IDC_REPAIR, px + pw - Scale(128), bottom - buttonH, Scale(128), buttonH, show);
     const int regTop = bottom - buttonH - Scale(8) - line * 2;
     place(IDC_REG_STATUS, px, regTop, pw, line * 2, show);
     if (m_collapsed)
@@ -799,11 +850,13 @@ void MainWindow::FillCameraDependentControls()
             return wa;
         return static_cast<uint64_t>(a.width) * a.height > static_cast<uint64_t>(b.width) * b.height;
     });
-    if (defH < 2160)
+    // Upscaler off: only what the camera really delivers.
+    const bool upscaling = m_settings.upscaler != Upscaler::Off;
+    if (upscaling && defH < 2160)
         m_resolutions.push_back({3840, 2160, false, L"Upscaled 16:9 (3840x2160) 4K"});
-    if (defH < 1440)
+    if (upscaling && defH < 1440)
         m_resolutions.push_back({2560, 1440, false, L"Upscaled 16:9 (2560x1440) 2K"});
-    if (defH < 1080)
+    if (upscaling && defH < 1080)
         m_resolutions.push_back({1920, 1080, false, L"Upscaled 16:9 (1920x1080) Full HD"});
     m_resolutions.insert(m_resolutions.end(), native.begin(), native.end());
 
@@ -852,7 +905,9 @@ void MainWindow::FillControls()
     int cameraIndex = 0;
     for (size_t i = 0; i < m_cameras.size(); ++i)
     {
-        ComboAdd(camera, m_cameras[i].name);
+        // Other virtual cameras (Phone Link, OBS) usually can't feed SmoothCam; say so up front.
+        ComboAdd(camera, IsVirtualCamera(m_cameras[i].symbolicLink) ? m_cameras[i].name + L" (virtual - may not work)"
+                                                                     : m_cameras[i].name);
         if (_wcsicmp(m_cameras[i].symbolicLink.c_str(), m_settings.device.c_str()) == 0)
             cameraIndex = static_cast<int>(i + 1);
     }
@@ -905,6 +960,7 @@ void MainWindow::FillControls()
         return label;
     });
     fill(IDC_SHARPNESS, kSharpness, m_settings.sharpening, plain);
+    fill(IDC_UPSCALER, kUpscalers, m_settings.upscaler, plain);
     fill(IDC_NOISE, kNoise, m_settings.noiseReduction, plain);
     fill(IDC_LOWLIGHT, kLowLight, m_settings.lowLight, plain);
     fill(IDC_BACKGROUND, kBackgrounds, m_settings.background, plain);
@@ -914,6 +970,7 @@ void MainWindow::FillControls()
     // Checked = let the camera slow down in dim light (the opposite of steady).
     CheckDlgButton(m_hwnd, IDC_STEADY, m_settings.steadyFps ? BST_UNCHECKED : BST_CHECKED);
     CheckDlgButton(m_hwnd, IDC_COMPARE, m_settings.compare ? BST_CHECKED : BST_UNCHECKED);
+    UpdateEnabledControls();
     m_filling = false;
     FillCameraDependentControls();
     UpdateHints();
@@ -957,6 +1014,11 @@ void MainWindow::ReadControls(int changedId)
         s.engine = kEngines[i].value;
     if (int i = selected(IDC_SHARPNESS); i >= 0)
         s.sharpening = kSharpness[i].value;
+    if (int i = selected(IDC_UPSCALER); i >= 0)
+        s.upscaler = kUpscalers[i].value;
+    // Turning the upscaler off drops an upscaled size back to the camera's own.
+    if (s.upscaler == Upscaler::Off && s.maxHeight && s.outputHeight > s.maxHeight)
+        s.outputWidth = s.outputHeight = 0;
     if (int i = selected(IDC_NOISE); i >= 0)
         s.noiseReduction = kNoise[i].value;
     if (int i = selected(IDC_LOWLIGHT); i >= 0)
@@ -978,7 +1040,8 @@ void MainWindow::ReadControls(int changedId)
 
     if (s == m_settings)
         return;
-    const bool formatChanged = s.outputFps != m_settings.outputFps || s.outputWidth != m_settings.outputWidth ||
+    const bool formatChanged = s.enabled != m_settings.enabled || s.outputFps != m_settings.outputFps ||
+                               s.outputWidth != m_settings.outputWidth ||
                                s.outputHeight != m_settings.outputHeight || s.device != m_settings.device;
     m_settings = s;
     if (!m_settings.Save(SettingsPath()) && !m_saveWarned)
@@ -989,7 +1052,7 @@ void MainWindow::ReadControls(int changedId)
                     L"permissions.",
                     L"SmoothCam", MB_OK | MB_ICONWARNING);
     }
-    if (changedId == IDC_CAMERA)
+    if (changedId == IDC_CAMERA || changedId == IDC_UPSCALER)
         FillCameraDependentControls();
     UpdateHints();
 
@@ -1015,6 +1078,7 @@ void MainWindow::OnCommand(int id, int code)
     case IDC_ENGINE:
     case IDC_RESOLUTION:
     case IDC_SHARPNESS:
+    case IDC_UPSCALER:
     case IDC_NOISE:
     case IDC_LOWLIGHT:
     case IDC_BACKGROUND:
@@ -1034,6 +1098,10 @@ void MainWindow::OnCommand(int id, int code)
                 InvalidateRect(m_preview, nullptr, FALSE);
             }
         }
+        break;
+    case IDC_ENABLE:
+        if (code == BN_CLICKED && !m_filling)
+            OnEnableClicked();
         break;
     case IDC_STEADY:
     case IDC_COMPARE:
@@ -1069,6 +1137,9 @@ void MainWindow::OnCommand(int id, int code)
     case IDC_REPAIR:
         Repair();
         break;
+    case IDC_WEBSITE:
+        ShellExecuteW(m_hwnd, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
+        break;
     case IDC_ABOUT:
         ShowAbout();
         break;
@@ -1102,8 +1173,33 @@ void MainWindow::RefreshStatus()
     if (!busy)
         m_userExpanded = false;
 
+    // Captions for the compare view, in the preview only.
+    if (busy && m_previewRunning && m_settings.enabled && m_settings.compare)
+    {
+        wchar_t left[96], right[96];
+        swprintf_s(left, L"Camera  %ux%u \u00b7 %.0f fps", m_settings.maxWidth, m_settings.maxHeight, st.inputFps);
+        swprintf_s(right, L"SmoothCam  %ux%u \u00b7 %.0f fps", st.width, st.height, st.outputFps);
+        m_renderer.SetCompareLabels(left, right);
+    }
+    else
+    {
+        m_renderer.SetCompareLabels({}, {});
+    }
+
     std::wstring text;
-    if (busy)
+    if (!m_settings.enabled)
+    {
+        wchar_t line[200];
+        swprintf_s(line, L"SmoothCam is off: apps get your plain camera (%ux%u, %u fps).", m_settings.maxWidth,
+                   m_settings.maxHeight, EffectiveOutputFps(m_settings));
+        text = line;
+        if (busy)
+        {
+            swprintf_s(line, L"\nCamera delivering %.0f fps.", st.inputFps);
+            text += line;
+        }
+    }
+    else if (busy)
     {
         wchar_t line[300];
         swprintf_s(line, L"%ux%u • camera %.0f fps → %.0f fps • +%.0f ms • GPU %.1f ms • %s",
@@ -1137,6 +1233,86 @@ void MainWindow::RefreshStatus()
     GetDlgItemTextW(m_hwnd, IDC_STATUS, current, static_cast<int>(std::size(current)));
     if (text != current)
         SetDlgItemTextW(m_hwnd, IDC_STATUS, text.c_str());
+}
+
+void MainWindow::DrawEnableSwitch(const DRAWITEMSTRUCT& item) const
+{
+    // Just the switch: a pill with a knob, green when SmoothCam is on.
+    HDC dc = item.hDC;
+    const RECT r = item.rcItem;
+    const bool on = m_settings.enabled;
+    FillRect(dc, &r, m_panelBrush);
+
+    const int sw = Scale(46), sh = Scale(24);
+    const int sx = r.right - sw - Scale(4);
+    const int sy = (r.top + r.bottom - sh) / 2;
+    HBRUSH track = CreateSolidBrush(on ? RGB(46, 160, 67) : (m_dark ? RGB(90, 90, 96) : RGB(176, 176, 184)));
+    HBRUSH knob = CreateSolidBrush(RGB(255, 255, 255));
+    HPEN noPen = CreatePen(PS_NULL, 0, 0);
+    HGDIOBJ oldBrush = SelectObject(dc, track);
+    HGDIOBJ oldPen = SelectObject(dc, noPen);
+    RoundRect(dc, sx, sy, sx + sw, sy + sh, sh, sh);
+    SelectObject(dc, knob);
+    const int k = sh - Scale(6);
+    const int kx = on ? sx + sw - Scale(3) - k : sx + Scale(3);
+    Ellipse(dc, kx, sy + Scale(3), kx + k, sy + Scale(3) + k);
+
+    // Focus box only after keyboard use, like every other Windows control.
+    if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT))
+    {
+        RECT focus = {sx - Scale(3), sy - Scale(3), sx + sw + Scale(3), sy + sh + Scale(3)};
+        DrawFocusRect(dc, &focus);
+    }
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(track);
+    DeleteObject(knob);
+    DeleteObject(noPen);
+}
+
+void MainWindow::OnEnableClicked()
+{
+    const bool turningOff = m_settings.enabled;
+    // Another app (not just our preview) is using SmoothCam: switching off
+    // changes what it sends right away, so ask first.
+    const auto st = Status::Load(StatusPath());
+    if (turningOff && st.streaming && st.IsFresh() && !m_previewRunning)
+    {
+        const int answer = MessageBoxW(m_hwnd,
+                                       L"Another app (for example Zoom or Teams) is using SmoothCam right now.\n\n"
+                                       L"Turning SmoothCam off switches that app to your plain camera immediately: "
+                                       L"no smoothing, no upscaling and no effects such as background blur.\n\n"
+                                       L"Turn SmoothCam off?",
+                                       L"SmoothCam", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+        if (answer != IDYES)
+            return;
+    }
+    Settings s = m_settings;
+    s.enabled = !s.enabled;
+    const bool previewWasRunning = m_previewRunning;
+    m_settings = s;
+    if (!m_settings.Save(SettingsPath()) && !m_saveWarned)
+    {
+        m_saveWarned = true;
+        MessageBoxW(m_hwnd, L"SmoothCam couldn't save its settings.", L"SmoothCam", MB_OK | MB_ICONWARNING);
+    }
+    SetDlgItemTextW(m_hwnd, IDC_ENABLE, m_settings.enabled ? L"SmoothCam on" : L"SmoothCam off");
+    InvalidateRect(GetDlgItem(m_hwnd, IDC_ENABLE), nullptr, TRUE);
+    UpdateEnabledControls();
+    // Reopen the preview so it shows the camera's own format (or SmoothCam's again).
+    if (previewWasRunning)
+    {
+        StopPreview();
+        StartPreview();
+    }
+    RefreshStatus();
+}
+
+void MainWindow::UpdateEnabledControls()
+{
+    for (int id : kProcessingControls)
+        EnableWindow(GetDlgItem(m_hwnd, id), m_settings.enabled);
+    SetDlgItemTextW(m_hwnd, IDC_ENABLE, m_settings.enabled ? L"SmoothCam on" : L"SmoothCam off");
 }
 
 void MainWindow::RefreshRegistration()
@@ -1290,10 +1466,10 @@ INT_PTR CALLBACK MainWindow::AboutProc(HWND hwnd, UINT message, WPARAM wParam, L
         if (SUCCEEDED(LoadIconWithScaleDown(self->m_instance, MAKEINTRESOURCEW(IDI_APP), r.right, r.bottom, &logo)))
             SendDlgItemMessageW(hwnd, IDC_ABOUT_LOGO, STM_SETICON, reinterpret_cast<WPARAM>(logo), 0);
 
-        std::wstring text = L"Version " SMOOTHCAM_VERSION_WSTRING L" (beta)\n"
+        std::wstring text = L"Version " SMOOTHCAM_VERSION_WSTRING L" \u00b7 smoothcam.vercel.app\n"
                             L"Copyright © 2026 SmoothCam contributors. MIT License.\n\n"
                             L"Everything runs on this PC: no network access, no telemetry, no account.\n\n"
-                            L"Uses AMD FidelityFX Super Resolution 1, Google's MediaPipe selfie segmentation "
+                            L"Uses AMD FidelityFX Super Resolution 1 and CAS, NVIDIA Image Scaling, Google's MediaPipe selfie segmentation "
                             L"model and Windows' built-in face detection. NVIDIA, AMD and Google are trademarks of "
                             L"their owners; SmoothCam is independent and not affiliated with them or Microsoft.";
         SetDlgItemTextW(hwnd, IDC_ABOUT_TEXT, text.c_str());
@@ -1309,6 +1485,7 @@ INT_PTR CALLBACK MainWindow::AboutProc(HWND hwnd, UINT message, WPARAM wParam, L
         {
             SetWindowTheme(GetDlgItem(hwnd, IDC_ABOUT_NOTICES), L"DarkMode_Explorer", nullptr);
             SetWindowTheme(GetDlgItem(hwnd, IDOK), L"DarkMode_Explorer", nullptr);
+            SetWindowTheme(GetDlgItem(hwnd, IDC_ABOUT_WEBSITE), L"DarkMode_Explorer", nullptr);
         }
         return TRUE;
     }
@@ -1330,6 +1507,11 @@ INT_PTR CALLBACK MainWindow::AboutProc(HWND hwnd, UINT message, WPARAM wParam, L
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
         {
             EndDialog(hwnd, 0);
+            return TRUE;
+        }
+        if (LOWORD(wParam) == IDC_ABOUT_WEBSITE)
+        {
+            ShellExecuteW(hwnd, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
             return TRUE;
         }
         break;

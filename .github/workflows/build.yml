@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SmoothCam_beta3
+          name: SmoothCam_v0.0.1
           path: |
-            dist/SmoothCam_beta3.exe
-            dist/SmoothCam_beta3.exe.sha256
+            dist/SmoothCam_v0.0.1.exe
+            dist/SmoothCam_v0.0.1.exe.sha256

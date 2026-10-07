@@ -1,6 +1,6 @@
 # SmoothCam privacy policy
 
-_Effective: on the v1.0.0 release date_
+_Effective: 8 October 2026 (version 0.0.1) · https://smoothcam.vercel.app_
 
 SmoothCam processes video from your webcam to produce a smoother video feed. Here is everything it
 does with your data:
@@ -11,7 +11,8 @@ does with your data:
   Windows' built-in face detector and a small model that runs on your PC. Nothing is recognized or
   identified (it only finds *where* a face is), nothing is stored, and nothing leaves your computer.
 - **No network access.** SmoothCam contains no code that connects to the internet. There is no
-  telemetry, analytics, crash upload, advertising, or account.
+  telemetry, analytics, crash upload, advertising, or account. The **Website** button only opens
+  https://smoothcam.vercel.app in your own browser.
 - **Settings** are stored in `C:\ProgramData\SmoothCam\settings.ini` on your computer.
 - **Logs** are stored in `C:\ProgramData\SmoothCam\logs\`. They contain timings, GPU and camera
   device names, and error messages — never images. They stay on your computer unless you choose to

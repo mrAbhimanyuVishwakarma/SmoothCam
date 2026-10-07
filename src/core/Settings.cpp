@@ -315,15 +315,20 @@ const wchar_t* ToString(Upscaler value)
 {
     switch (value)
     {
+    case Upscaler::Auto: return L"auto";
+    case Upscaler::Off: return L"off";
     case Upscaler::Fsr: return L"fsr";
     case Upscaler::Nis: return L"nis";
+    case Upscaler::Cas: return L"cas";
+    case Upscaler::Lanczos: return L"lanczos";
     }
-    return L"fsr";
+    return L"auto";
 }
 
 std::optional<Upscaler> ParseUpscaler(std::wstring_view text)
 {
-    static constexpr Upscaler values[] = {Upscaler::Fsr, Upscaler::Nis};
+    static constexpr Upscaler values[] = {Upscaler::Auto, Upscaler::Off, Upscaler::Fsr,
+                                          Upscaler::Nis,  Upscaler::Cas, Upscaler::Lanczos};
     return ParseEnum(text, values);
 }
 
@@ -352,9 +357,34 @@ uint32_t EffectiveOutputHeight(const Settings& settings)
     return h;
 }
 
+Settings ProcessingSettings(const Settings& s)
+{
+    if (s.enabled)
+        return s;
+    Settings p = s;
+    p.mode = Mode::Off;
+    p.sharpening = Sharpening::Off;
+    p.noiseReduction = NoiseReduction::Off;
+    p.lowLight = LowLightBoost::Off;
+    p.background = Background::Off;
+    p.autoFrame = AutoFrame::Off;
+    p.upscaler = Upscaler::Off;
+    p.compare = false;
+    return p;
+}
+
+uint32_t EffectiveOutputFps(const Settings& s)
+{
+    return !s.enabled && s.cameraFps ? s.cameraFps : s.outputFps;
+}
+
 void EffectiveOutputSize(const Settings& settings, uint32_t& width, uint32_t& height)
 {
-    if (settings.outputWidth && settings.outputHeight)
+    // Switched off, or upscaler off: nothing bigger than the camera's own
+    // resolution (switched off: exactly the camera's default).
+    const bool tooBig = settings.upscaler == Upscaler::Off && settings.maxHeight &&
+                        settings.outputHeight > settings.maxHeight;
+    if (settings.outputWidth && settings.outputHeight && !tooBig && settings.enabled)
     {
         width = settings.outputWidth;
         height = settings.outputHeight;
@@ -424,12 +454,13 @@ Settings Settings::Load(const std::filesystem::path& path)
     if (auto it = kv.find(L"auto_frame"); it != kv.end())
         s.autoFrame = ParseAutoFrame(it->second).value_or(AutoFrame::Off);
     if (auto it = kv.find(L"upscaler"); it != kv.end())
-        s.upscaler = ParseUpscaler(it->second).value_or(Upscaler::Fsr);
+        s.upscaler = ParseUpscaler(it->second).value_or(Upscaler::Auto);
     if (auto it = kv.find(L"mode"); it != kv.end())
         s.mode = ParseMode(it->second).value_or(Mode::Quality);
     if (auto it = kv.find(L"engine"); it != kv.end())
         s.engine = ParseEngine(it->second).value_or(EngineChoice::Auto);
     s.steadyFps = ToBool(kv, L"steady_fps", true);
+    s.enabled = ToBool(kv, L"enabled", true);
     s.compare = ToBool(kv, L"compare", false);
     s.logLevel = static_cast<int>(std::min<uint32_t>(ToUInt(kv, L"log_level", 1), 2));
     return s;
@@ -438,6 +469,7 @@ Settings Settings::Load(const std::filesystem::path& path)
 bool Settings::Save(const std::filesystem::path& path) const
 {
     KeyValues kv;
+    kv[L"enabled"] = enabled ? L"1" : L"0";
     kv[L"device"] = device;
     kv[L"device_name"] = deviceName;
     kv[L"max_width"] = std::to_wstring(maxWidth);

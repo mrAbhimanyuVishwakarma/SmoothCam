@@ -274,10 +274,14 @@ struct Engine::Impl
                 if (FAILED(hr))
                 {
                     cameraOpen = false;
-                    wchar_t msg[96];
-                    swprintf_s(msg, hr == MF_E_NO_CAPTURE_DEVICES_AVAILABLE ? L"No camera found"
-                                                                             : L"Camera not available (0x%08X)",
-                               hr);
+                    wchar_t msg[160];
+                    if (hr == MF_E_NO_CAPTURE_DEVICES_AVAILABLE)
+                        swprintf_s(msg, L"No camera found");
+                    else if (IsVirtualCamera(s.device))
+                        swprintf_s(msg, L"This is a virtual camera (e.g. Phone Link), which Windows doesn't let "
+                                        L"SmoothCam read from. Pick a real camera.");
+                    else
+                        swprintf_s(msg, L"Camera not available (0x%08X)", hr);
                     SetMessage(msg);
                     if (stopEvent.wait(1500))
                         break;
@@ -370,7 +374,7 @@ struct Engine::Impl
             std::lock_guard g(lock);
             if (!settingsDirty)
                 return;
-            next = pendingSettings;
+            next = ProcessingSettings(pendingSettings);
             settingsDirty = false;
         }
         const bool rebuild = next.mode != settings.mode || next.engine != settings.engine;
@@ -739,6 +743,18 @@ struct Engine::Impl
         ComposeParams p;
         p.compare = settings.compare && settings.mode != Mode::Off;
         ComputeCrop(nextView, p);
+        if (p.compare)
+        {
+            // Left half of the compare view: the camera exactly as it is - the
+            // real frame due now (no interpolation), before noise reduction,
+            // effects or auto-framing zoom.
+            const Slot* real = d.kind == PaceDecision::Kind::Interpolate && d.alpha < 0.5f ? prev : next;
+            p.raw = real->frame.View();
+            p.rawCropOffset[0] = p.cropOffset[0];
+            p.rawCropOffset[1] = p.cropOffset[1];
+            p.rawCropScale[0] = p.cropScale[0];
+            p.rawCropScale[1] = p.cropScale[1];
+        }
 
         // Auto-framing narrows the crop around the face; the compositor then
         // upscales it back to the output size with FSR, so zooming stays sharp.
@@ -757,7 +773,7 @@ struct Engine::Impl
             p.cropScale[1] = crop.h;
         }
         p.sharpness = SharpnessFor(nextView, p);
-        p.useNis = settings.upscaler == Upscaler::Nis;
+        p.upscaler = settings.upscaler;
 
         if (settings.lowLight != LowLightBoost::Off)
         {
@@ -899,7 +915,7 @@ HRESULT Engine::Start(const OutputFormat& format, const Settings& settings)
     m_impl = std::make_unique<Impl>();
     auto& s = *m_impl;
     s.format = format;
-    s.settings = settings;
+    s.settings = ProcessingSettings(settings);
     s.errorEvent.create();
     s.reopenEvent.create();
 

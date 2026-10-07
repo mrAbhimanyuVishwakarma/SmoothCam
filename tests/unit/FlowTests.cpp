@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <random>
 #include <vector>
 
@@ -303,7 +304,7 @@ TEST_F(FlowTest, NvidiaOpticalFlowAgreesWithTruth)
     EXPECT_GT(Psnr(Compose(ComposeMode::Interpolate, 0.5f, &fwd, &bwd), truth), 32.0);
 }
 
-TEST_F(FlowTest, FsrUpscaleBeatsBilinear)
+TEST_F(FlowTest, UpscalersBeatBilinear)
 {
     // Camera at half the output resolution: box-downsample the test image 2x,
     // upscale it back and compare with the original.
@@ -324,19 +325,16 @@ TEST_F(FlowTest, FsrUpscaleBeatsBilinear)
     Compositor comp;
     ASSERT_HRESULT_SUCCEEDED(comp.Init(*m_gpu));
     ASSERT_HRESULT_SUCCEEDED(comp.EnsureOutput(W, H, false));
-    auto run = [&](float sharpness) {
+    auto run = [&](float sharpness, Upscaler upscaler) {
         ComposeParams p;
         p.mode = ComposeMode::Hold;
         p.sharpness = sharpness;
+        p.upscaler = upscaler;
         comp.Compose(src.View(), src.View(), nullptr, nullptr, p);
         std::vector<uint8_t> out(static_cast<size_t>(W) * H * 3 / 2);
         EXPECT_HRESULT_SUCCEEDED(comp.Readback(out.data(), W, static_cast<DWORD>(out.size())));
         return out;
     };
-
-    const auto easu = run(-1.0f);
-    EXPECT_TRUE(comp.Upscaled());
-    EXPECT_EQ(comp.RenderWidth(), w);
 
     // Reference: plain bilinear stretch on the CPU.
     std::vector<uint8_t> bilinear(truth.size(), 128);
@@ -354,16 +352,43 @@ TEST_F(FlowTest, FsrUpscaleBeatsBilinear)
             bilinear[y * W + x] = static_cast<uint8_t>(v + 0.5f);
         }
     }
-
-    const double psnrEasu = Psnr(easu, truth);
     const double psnrBilinear = Psnr(bilinear, truth);
-    RecordProperty("psnr_fsr_easu", std::to_string(psnrEasu));
     RecordProperty("psnr_bilinear", std::to_string(psnrBilinear));
-    EXPECT_GT(psnrEasu, 28.0);
-    EXPECT_GE(psnrEasu, psnrBilinear - 0.1);
+    std::printf("PSNR vs original: bilinear (CPU) %.2f dB", psnrBilinear);
 
-    // Sharpening on top stays sane (no ringing explosions or dark borders).
-    const auto sharpened = run(0.5f);
-    EXPECT_GT(Psnr(sharpened, truth), 26.0);
-    EXPECT_GT(sharpened[(H / 2) * W + 2], 16);
+    // Every upscaler beats (or matches) a plain stretch, and says which ran.
+    const struct
+    {
+        Upscaler choice;
+        const wchar_t* name;
+        const char* key;
+    } cases[] = {
+        {Upscaler::Fsr, L"FSR 1", "psnr_fsr"},     {Upscaler::Nis, L"NIS", "psnr_nis"},
+        {Upscaler::Cas, L"CAS", "psnr_cas"},       {Upscaler::Lanczos, L"Lanczos", "psnr_lanczos"},
+        {Upscaler::Auto, L"CAS", "psnr_auto"}, // 2x: Auto picks CAS
+    };
+    for (const auto& c : cases)
+    {
+        const auto out = run(-1.0f, c.choice);
+        EXPECT_TRUE(comp.Upscaled());
+        EXPECT_EQ(comp.RenderWidth(), w);
+        EXPECT_STREQ(comp.UpscalerName(), c.name);
+        const double psnr = Psnr(out, truth);
+        RecordProperty(c.key, std::to_string(psnr));
+        std::printf(", %ls %.2f dB", c.name, psnr);
+        EXPECT_GT(psnr, 28.0) << c.key;
+        EXPECT_GE(psnr, psnrBilinear - 0.1) << c.key;
+
+        // Sharpening on top stays sane (no ringing explosions or dark borders).
+        const auto sharpened = run(0.0f, c.choice);
+        EXPECT_GT(Psnr(sharpened, truth), 26.0) << c.key;
+        EXPECT_GT(sharpened[(H / 2) * W + 2], 16) << c.key;
+    }
+
+    // Off: no upscaler at all, the frame is built straight at output size.
+    const auto off = run(-1.0f, Upscaler::Off);
+    EXPECT_FALSE(comp.Upscaled());
+    EXPECT_STREQ(comp.UpscalerName(), L"");
+    std::printf(", off %.2f dB\n", Psnr(off, truth));
+    EXPECT_NEAR(Psnr(off, truth), psnrBilinear, 1.0);
 }

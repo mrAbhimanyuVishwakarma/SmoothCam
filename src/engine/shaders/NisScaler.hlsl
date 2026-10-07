@@ -60,6 +60,8 @@ Texture2D coef_scaler : register(t1);
 Texture2D coef_usm : register(t2);
 RWTexture2D<unorm float> out_texture : register(u0);
 
+// NIS stores a float4; only luma is kept, which is exactly what we want.
+#pragma warning(disable : 3206) // implicit truncation of vector type
 #include "NIS_Scaler.h"
 
 [numthreads(NIS_THREAD_GROUP_SIZE, 1, 1)]

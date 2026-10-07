@@ -4,25 +4,26 @@
 ;   ISCC.exe /DBuildDir=..\build\x64-release\bin installer\SmoothCam.iss
 ;
 ; Silent install/uninstall (needed for the Microsoft Store listing):
-;   SmoothCam_beta3.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+;   SmoothCam_v0.0.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ;   "%ProgramFiles%\SmoothCam\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 #ifndef BuildDir
   #define BuildDir "..\build\x64-release\bin"
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "0.0.1"
 #endif
 #ifndef VersionLabel
-  #define VersionLabel "Beta 3"
+  #define VersionLabel ""
 #endif
 #ifndef OutputName
-  #define OutputName "SmoothCam_beta3"
+  #define OutputName "SmoothCam_v0.0.1"
 #endif
 
 #define AppName "SmoothCam"
 #define AppPublisher "SmoothCam contributors"
-#define AppURL "https://github.com/smoothcam/SmoothCam"
+#define AppURL "https://smoothcam.vercel.app"
+#define RepoURL "https://github.com/smoothcam/SmoothCam"
 #define AppExe "SmoothCam.exe"
 
 [Setup]
@@ -30,14 +31,14 @@
 AppId={{59677135-80DB-4B43-97A7-E770D7A4E868}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} {#AppVersion} {#VersionLabel}
+AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
-AppSupportURL={#AppURL}/issues
-AppUpdatesURL={#AppURL}/releases
+AppSupportURL={#RepoURL}/issues
+AppUpdatesURL={#RepoURL}/releases
 AppCopyright=Copyright (c) 2026 {#AppPublisher}
 VersionInfoVersion={#AppVersion}.0
-VersionInfoDescription={#AppName} {#VersionLabel} Setup
+VersionInfoDescription={#AppName} {#AppVersion} Setup
 VersionInfoProductName={#AppName}
 
 DefaultDirName={autopf}\{#AppName}

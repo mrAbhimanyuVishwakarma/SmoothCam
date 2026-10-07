@@ -1,20 +1,24 @@
 // smoothcam_bench - drive the engine with a real camera and report timing.
 //
 //   smoothcam_bench [--seconds N] [--size WxH] [--fps N] [--mode quality|balanced|lowlatency|off]
-//                   [--engine auto|nvidia|gpu|basic] [--compare] [--snap DIR] [--list]
+//                   [--engine auto|nvidia|gpu|basic] [--compare] [--snap DIR] [--list] [--camera NAME]
 //                   [--sharpen S] [--noise N] [--lowlight L] [--background B] [--autoframe A]
 //   smoothcam_bench --vision-image PICTURE --out DIR   (face detection + person mask on a still image)
 
 #include "Engine.h"
 #include "Log.h"
 #include "Png.h"
+#include "Clock.h"
 #include "capture/Camera.h"
+#include "compositor/Compositor.h"
+#include "gpu/Gpu.h"
 #include "vision/Vision.h"
 
 #include <mfapi.h>
 
 #include <wil/resource.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cwchar>
 #include <string>
@@ -34,6 +38,8 @@ struct Options
     std::wstring snapDir;
     bool list = false;
     std::wstring visionImage;
+    std::wstring upscaleImage;
+    std::wstring cameraName;
     std::wstring outDir;
 };
 
@@ -61,6 +67,8 @@ bool Parse(int argc, wchar_t** argv, Options& o)
             o.settings.compare = true;
         else if (a == L"--snap")
             o.snapDir = next();
+        else if (a == L"--camera")
+            o.cameraName = next(); // part of a camera's name, e.g. a phone via Phone Link
         else if (a == L"--list")
             o.list = true;
         else if (a == L"--sharpen")
@@ -71,10 +79,14 @@ bool Parse(int argc, wchar_t** argv, Options& o)
             o.settings.lowLight = ParseLowLightBoost(next()).value_or(LowLightBoost::Off);
         else if (a == L"--background")
             o.settings.background = ParseBackground(next()).value_or(Background::Off);
+        else if (a == L"--upscaler")
+            o.settings.upscaler = ParseUpscaler(next()).value_or(Upscaler::Fsr);
         else if (a == L"--autoframe")
             o.settings.autoFrame = ParseAutoFrame(next()).value_or(AutoFrame::Off);
         else if (a == L"--vision-image")
             o.visionImage = next();
+        else if (a == L"--upscale-image")
+            o.upscaleImage = next();
         else if (a == L"--out")
             o.outDir = next();
         else
@@ -95,6 +107,78 @@ void ListCameras()
                 wprintf(L"    %4ux%-4u %6.2f fps %s\n", f.width, f.height, f.fps, SubtypeName(f.subtype).c_str());
     }
 }
+// Halves a still image, upscales it back with every upscaler and prints how
+// close each gets to the original (luma PSNR) and how long a frame takes.
+int RunUpscaleImage(const Options& o)
+{
+    std::vector<uint8_t> bgra;
+    uint32_t iw = 0, ih = 0;
+    if (FAILED(ReadImageBgra(o.upscaleImage, bgra, iw, ih)))
+    {
+        fwprintf(stderr, L"cannot read %s\n", o.upscaleImage.c_str());
+        return 1;
+    }
+    // Multiples of 4 so the half-size image still has even NV12 dimensions.
+    const uint32_t W = iw & ~3u, H = ih & ~3u, w = W / 2, h = H / 2;
+    std::vector<uint8_t> truth(static_cast<size_t>(W) * H);
+    for (uint32_t y = 0; y < H; ++y)
+        for (uint32_t x = 0; x < W; ++x)
+        {
+            const uint8_t* px = &bgra[(static_cast<size_t>(y) * iw + x) * 4];
+            truth[static_cast<size_t>(y) * W + x] =
+                static_cast<uint8_t>(16.5f + (0.0722f * px[0] + 0.7152f * px[1] + 0.2126f * px[2]) * 219.0f / 255.0f);
+        }
+    std::vector<uint8_t> low(static_cast<size_t>(w) * h * 3 / 2, 128);
+    for (uint32_t y = 0; y < h; ++y)
+        for (uint32_t x = 0; x < w; ++x)
+            low[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>(
+                (truth[(2 * y) * W + 2 * x] + truth[(2 * y) * W + 2 * x + 1] + truth[(2 * y + 1) * W + 2 * x] +
+                 truth[(2 * y + 1) * W + 2 * x + 1] + 2) / 4);
+
+    std::unique_ptr<GpuDevice> gpu;
+    if (FAILED(GpuDevice::Create(gpu)))
+        return 1;
+    Nv12Texture src;
+    if (FAILED(src.Create(gpu->Device(), w, h)))
+        return 1;
+    gpu->Context()->UpdateSubresource(src.tex.get(), 0, nullptr, low.data(), w, 0);
+    Compositor comp;
+    if (FAILED(comp.Init(*gpu)) || FAILED(comp.EnsureOutput(W, H, false)))
+        return 1;
+
+    wprintf(L"%ux%u -> %ux%u on %s\n", w, h, W, H, gpu->Info().name.c_str());
+    std::vector<uint8_t> out(static_cast<size_t>(W) * H * 3 / 2);
+    for (Upscaler u : {Upscaler::Off, Upscaler::Fsr, Upscaler::Nis, Upscaler::Cas, Upscaler::Lanczos, Upscaler::Auto})
+    {
+        ComposeParams p;
+        p.mode = ComposeMode::Hold;
+        p.sharpness = -1.0f; // compare the scalers themselves
+        p.upscaler = u;
+        constexpr int kRuns = 30;
+        Hns start = 0;
+        for (int i = 0; i < kRuns + 3; ++i)
+        {
+            if (i == 3)
+                start = QpcNow(); // after warm-up
+            comp.Compose(src.View(), src.View(), nullptr, nullptr, p);
+            comp.Readback(out.data(), W, static_cast<DWORD>(out.size()));
+        }
+        const double ms = HnsToMs(QpcNow() - start) / kRuns;
+        double se = 0;
+        for (size_t i = 0; i < truth.size(); ++i)
+        {
+            const double d = static_cast<double>(out[i]) - truth[i];
+            se += d * d;
+        }
+        const double mse = se / truth.size();
+        const double psnr = mse > 0 ? 10 * std::log10(255.0 * 255.0 / mse) : 99.0;
+        const wchar_t* used = comp.UpscalerName();
+        wprintf(L"  %-8s -> %-8s  PSNR %6.2f dB   %5.2f ms/frame (incl. readback)\n", ToString(u),
+                *used ? used : L"bilinear", psnr, ms);
+    }
+    return 0;
+}
+
 // Runs face detection and person segmentation on a still image and writes
 // mask.png and overlay.png (background dimmed, faces boxed) to the --out folder.
 int RunVisionImage(const Options& o)
@@ -192,7 +276,8 @@ int wmain(int argc, wchar_t** argv)
     if (!Parse(argc, argv, o))
     {
         fwprintf(stderr, L"usage: smoothcam_bench [--seconds N] [--size WxH] [--fps N] [--mode M] [--engine E] "
-                         L"[--compare] [--snap DIR] [--list]\n");
+                         L"[--compare] [--snap DIR] [--list] [--sharpen S] [--upscaler auto|off|fsr|nis|cas|lanczos] [--noise N] "
+                         L"[--lowlight L] [--background B] [--autoframe A] [--vision-image PIC --out DIR] [--upscale-image PIC]\n");
         return 2;
     }
 
@@ -200,6 +285,29 @@ int wmain(int argc, wchar_t** argv)
     MFStartup(MF_VERSION);
     log::Init(std::filesystem::temp_directory_path() / L"smoothcam-bench", L"bench", log::Level::Info);
 
+    if (!o.cameraName.empty())
+    {
+        for (const auto& cam : EnumerateCameras())
+            if (cam.name.find(o.cameraName) != std::wstring::npos)
+            {
+                o.settings.device = cam.symbolicLink;
+                o.settings.deviceName = cam.name;
+                break;
+            }
+        if (o.settings.device.empty())
+        {
+            fwprintf(stderr, L"no camera matching \"%s\" (try --list)\n", o.cameraName.c_str());
+            return 1;
+        }
+        wprintf(L"Using camera: %s\n", o.settings.deviceName.c_str());
+    }
+
+    if (!o.upscaleImage.empty())
+    {
+        const int rc = RunUpscaleImage(o);
+        MFShutdown();
+        return rc;
+    }
     if (!o.visionImage.empty())
     {
         const int rc = RunVisionImage(o);
